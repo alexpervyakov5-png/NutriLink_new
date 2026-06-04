@@ -1,0 +1,49 @@
+name: Nutrilink
+description: "A new Flutter project."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.9.2
+
+dependencies:
+  flutter:
+    sdk: flutter
+  supabase_flutter: ^2.8.0
+  cupertino_icons: ^1.0.8
+  flutter_bloc: ^8.1.3
+  bloc: ^8.1.1
+  page_transition: 2.1.0
+  equatable: ^2.0.5
+  dartz: ^0.10.1
+  fl_chart: ^0.66.0 
+  flutter_dotenv: ^5.1.0
+  provider: ^6.1.1
+  intl: ^0.20.2 
+  uuid: ^4.3.3
+  flutter_localizations:
+    sdk: flutter
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - icons/nutrilink.png
+    - icons/home.png
+    - icons/book.png
+    - icons/measurements.png
+    - icons/stats.png
+    - icons/
+    - images/           
+    - images/breakfast.png
+    - images/lunch.png
+    - images/dinner.png
+    - images/snack.png
+    - images/protein.png
+    - images/fats.png
+    - images/carbs.png
+    - images/calories.png

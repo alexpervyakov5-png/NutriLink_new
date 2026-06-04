@@ -1,0 +1,1432 @@
+import 'dart:async';
+import 'dart:io' show SocketException;
+import 'package:flutter/foundation.dart';
+import 'package:uuid/uuid.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' hide AuthUser;
+import '../core/config.dart';
+import 'clients_service.dart';
+import 'models.dart';
+
+// ============================================
+//  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// ============================================
+int _toIntSafe(dynamic v, {int defaultValue = 0}) {
+  if (v == null) return defaultValue;
+  if (v is int) return v;
+  if (v is double) return v.round();
+  if (v is String) return int.tryParse(v) ?? defaultValue;
+  return defaultValue;
+}
+
+double _toDoubleSafe(dynamic v, {double defaultValue = 0.0}) {
+  if (v == null) return defaultValue;
+  if (v is double) return v;
+  if (v is int) return v.toDouble();
+  if (v is String) return double.tryParse(v) ?? defaultValue;
+  return defaultValue;
+}
+
+Future<T> _retryRequest<T>(Future<T> Function() request, {int maxAttempts = 3}) async {
+  int attempt = 0;
+  while (attempt < maxAttempts) {
+    try {
+      return await request();
+    } on SocketException catch (e) {
+      attempt++;
+      debugPrint('⚠️ Network error (attempt $attempt/$maxAttempts): $e');
+      if (attempt == maxAttempts) rethrow;
+      await Future.delayed(Duration(milliseconds: 500 * attempt));
+    } on PostgrestException catch (e) {
+      if (e.code == 'PGRST303' && e.message.contains('JWT expired')) {
+        await SupabaseConfig.signOut();
+      }
+      rethrow;
+    } catch (e) {
+      rethrow;
+    }
+  }
+  throw Exception('Failed after $maxAttempts attempts');
+}
+
+// 🔥 Маппер ID роли в enum
+UserRole _parseRoleFromId(String? roleId) {
+  if (roleId == SupabaseConfig.trainerRoleId) return UserRole.trainer;
+  return UserRole.client;
+}
+
+// ============================================
+//  AuthService (работает с реальным авторизованным пользователем)
+// ============================================
+class AuthService extends ChangeNotifier {
+  final SupabaseClient _supabase = SupabaseConfig.client;
+
+  AuthUser? _user;
+  bool _loading = false;
+  String? _error;
+
+  AuthUser? get user => _user;
+  bool get loading => _loading;
+  String? get error => _error;
+  bool get isAuth => _user != null;
+
+  AuthService() {
+    _supabase.auth.onAuthStateChange.listen((data) {
+      if (data.event == AuthChangeEvent.signedOut) {
+        _user = null;
+        notifyListeners();
+      }
+    });
+  }
+
+  Future<void> checkSession() async {
+    _loading = true;
+    notifyListeners();
+    try {
+      await Future.delayed(const Duration(milliseconds: 300));
+      final u = _supabase.auth.currentUser;
+      if (u != null) {
+        final d = await _supabase
+            .from('users')
+            .select('username, role_id')
+            .eq('id', u.id)
+            .maybeSingle();
+            
+        _user = AuthUser(
+          id: u.id,
+          email: u.email ?? '',
+          username: d?['username'] as String?,
+          roleId: d?['role_id'] as String?,
+          role: _parseRoleFromId(d?['role_id'] as String?),
+        );
+      }
+    } catch (e) {
+      _error = 'Ошибка сессии: $e';
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
+  String _mapAuthError(String message) {
+    final msg = message.toLowerCase();
+    if (msg.contains('invalid login credentials') || 
+        msg.contains('invalid credentials') ||
+        msg.contains('user not found') ||
+        msg.contains('wrong password')) {
+      return 'Неверный email или пароль';
+    }
+    if (msg.contains('email not confirmed')) {
+      return 'Подтвердите ваш email. Проверьте почту';
+    }
+    if (msg.contains('rate limit')) {
+      return 'Слишком много попыток. Попробуйте позже';
+    }
+    if (msg.contains('weak password')) {
+      return 'Пароль слишком слабый. Минимум 6 символов';
+    }
+    return 'Ошибка авторизации: $message';
+  }
+
+  Future<bool> signIn(String email, String password) async {
+    _loading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      final result = await _supabase.auth.signInWithPassword(
+        email: email.trim(),
+        password: password,
+      );
+      
+      if (result.user == null) {
+        _error = 'Неверный email или пароль';
+        _loading = false;
+        notifyListeners();
+        return false;
+      }
+      
+      final d = await _supabase
+          .from('users')
+          .select('username, role_id')
+          .eq('id', result.user!.id)
+          .maybeSingle();
+          
+      _user = AuthUser(
+        id: result.user!.id,
+        email: result.user!.email ?? '',
+        username: d?['username'] as String?,
+        roleId: d?['role_id'] as String?,
+        role: _parseRoleFromId(d?['role_id'] as String?),
+      );
+      
+      _loading = false;
+      notifyListeners();
+      return true;
+
+    } on AuthException catch (e) {
+      debugPrint('SignIn AuthException: ${e.message} (code: ${e.code})');
+      _error = _mapAuthError(e.message);
+      _loading = false;
+      notifyListeners();
+      return false;
+    } on SocketException catch (e) {
+      debugPrint('SignIn SocketException: $e');
+      _error = 'Нет подключения к интернету. Проверьте соединение';
+      _loading = false;
+      notifyListeners();
+      return false;
+    } catch (e, stack) {
+      debugPrint('SignIn Unknown Error: $e');
+      debugPrint('Stack: $stack');
+      _error = 'Ошибка подключения. Попробуйте снова';
+      _loading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> signUp({
+    required String email,
+    required String password,
+    required String username,
+    required UserRole role,
+  }) async {
+    _loading = true;
+    _error = null;
+    notifyListeners();
+    try {
+      final roleId = role == UserRole.trainer 
+          ? SupabaseConfig.trainerRoleId 
+          : SupabaseConfig.clientRoleId;
+
+      final r = await _supabase.auth.signUp(
+        email: email.trim(),
+        password: password,
+        data: {
+          'username': username,
+          'role_id': roleId,
+        },
+      );
+      if (r.user == null) {
+        _error = 'Ошибка регистрации: не удалось создать аккаунт';
+        _loading = false;
+        notifyListeners();
+        return false;
+      }
+      
+      if (role == UserRole.trainer) {
+        await _supabase.from('user_goals').insert({
+          'user_id': r.user!.id,
+          'calories_target': 2500,
+          'protein_target': 150,
+          'fat_target': 80,
+          'carbs_target': 280,
+          'is_active': true,
+        });
+      }
+      
+      _user = AuthUser(
+        id: r.user!.id,
+        email: r.user!.email ?? '',
+        username: username,
+        roleId: roleId,
+        role: role,
+      );
+      _loading = false;
+      notifyListeners();
+      return true;
+    } on AuthException catch (e) {
+      debugPrint('SignUp AuthException: ${e.message}');
+      _error = _mapAuthError(e.message);
+      _loading = false;
+      notifyListeners();
+      return false;
+    } on SocketException catch (e) {
+      debugPrint('SignUp SocketException: $e');
+      _error = 'Нет подключения к интернету';
+      _loading = false;
+      notifyListeners();
+      return false;
+    } catch (e) {
+      debugPrint('SignUp General Error: $e');
+      _error = 'Произошла ошибка при регистрации';
+      _loading = false;
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<void> signOut() async {
+    await _supabase.auth.signOut();
+    _user = null;
+    notifyListeners();
+  }
+}
+
+// ============================================
+//  ProfileService
+// ============================================
+class ProfileService extends ChangeNotifier {
+  final ClientsService _clientsService;
+  Profile? _profile;
+  bool _loading = false, _saving = false;
+  String? _error;
+  DateTime? _lastLoaded;
+
+  ProfileService(this._clientsService);
+
+  Profile? get profile => _profile;
+  bool get loading => _loading;
+  bool get saving => _saving;
+  String? get error => _error;
+  
+  // 🔥 Используем ID выбранного клиента/тренера
+  String get _userId => _clientsService.selectedUserId;
+
+  Future<void> load({bool force = false}) async {
+    final uid = _userId;
+    if (uid.isEmpty) return;
+
+    if (!force && _profile != null && _lastLoaded != null) {
+      if (DateTime.now().difference(_lastLoaded!) < const Duration(minutes: 5)) {
+        debugPrint('📋 Profile: using cached data for $uid');
+        return;
+      }
+    }
+
+    _loading = true;
+    _error = null;
+    notifyListeners();
+
+    try {
+      final response = await SupabaseConfig.client
+          .from('users')
+          .select()
+          .eq('id', uid)
+          .maybeSingle();
+
+      if (response == null) {
+        _profile = Profile(
+          id: uid,
+          firstName: '',
+          lastName: '',
+          goal: GoalType.maintenance,
+        );
+      } else {
+        _profile = Profile(
+          id: response['id'] as String,
+          firstName: _parseFirst(response['username']),
+          lastName: _parseLast(response['username']),
+          birthDate: response['date_of_birth'] != null
+              ? DateTime.parse(response['date_of_birth'] as String)
+              : null,
+          heightCm: _toIntSafe(response['height_cm']),
+          gender: response['gender'] as String?,
+          goal: _parseGoal(response['goal'] as String?),
+        );
+      }
+      _lastLoaded = DateTime.now();
+    } catch (e) {
+      _error = 'Ошибка: $e';
+      if (e.toString().contains('JWT expired')) {
+        await SupabaseConfig.signOut();
+      }
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> save() async {
+    if (_profile == null) return false;
+    _saving = true;
+    _error = null;
+    notifyListeners();
+    try {
+      final uid = _userId;
+      if (uid.isEmpty) throw Exception('Не авторизован');
+      final username = '${_profile!.firstName} ${_profile!.lastName}'.trim();
+      await SupabaseConfig.client.from('users').upsert({
+        'id': uid,
+        'username': username.isEmpty ? null : username,
+        'email': SupabaseConfig.client.auth.currentUser?.email,
+        'height_cm': _profile!.heightCm,
+        'gender': _profile!.gender,
+        'goal': _profile!.goal.toString().split('.').last,
+        'date_of_birth': _profile!.birthDate?.toIso8601String(),
+      }, onConflict: 'id');
+      _lastLoaded = null;
+      return true;
+    } catch (e) {
+      _error = 'Ошибка: $e';
+      return false;
+    } finally {
+      _saving = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> updatePassword(String newPassword) async {
+    try {
+      await SupabaseConfig.client.auth
+          .updateUser(UserAttributes(password: newPassword));
+      return true;
+    } catch (e) {
+      _error = 'Ошибка смены пароля: $e';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  void update(Profile Function(Profile) fn) {
+    if (_profile != null) {
+      _profile = fn(_profile!);
+      notifyListeners();
+    }
+  }
+
+  String _parseFirst(dynamic v) =>
+      v == null ? '' : v.toString().trim().split(' ').first;
+
+  String _parseLast(dynamic v) {
+    final n = v.toString().trim();
+    return n.isEmpty
+        ? ''
+        : (n.split(' ').length > 1 ? n.split(' ').skip(1).join(' ') : '');
+  }
+
+  GoalType _parseGoal(String? v) => v == null
+      ? GoalType.maintenance
+      : GoalType.values.firstWhere(
+          (e) => e.toString().split('.').last == v,
+          orElse: () => GoalType.maintenance,
+        );
+}
+
+// ============================================
+//  DiaryService
+// ============================================
+class DiaryService extends ChangeNotifier {
+  final ClientsService _clientsService;
+  final _uuid = const Uuid();
+  DailyGoals? _goals = const DailyGoals.empty();
+
+  final Map<MealType, List<Meal>> _meals = {
+    for (var t in MealType.values) t: [],
+  };
+  final Map<MealType, DateTime?> _mealsCacheTime = {
+    for (var t in MealType.values) t: null,
+  };
+  final Map<MealType, bool> _expanded = {
+    MealType.breakfast: true,
+    MealType.lunch: true,
+    MealType.dinner: false,
+    MealType.snack: false,
+  };
+
+  final Map<MealType, String?> _typeComments = {};
+  String? getCommentForType(MealType type) => _typeComments[type];
+
+  DateTime _date = DateTime.now();
+  bool _loading = false;
+  bool _loadingGoals = false;
+  String? _error;
+
+  DiaryService(this._clientsService);
+
+  DailyGoals? get goals => _goals;
+  Map<MealType, List<Meal>> get meals => _meals;
+  Map<MealType, bool> get expanded => _expanded;
+  DateTime get date => _date;
+  bool get loading => _loading;
+  bool get loadingGoals => _loadingGoals;
+  String? get error => _error;
+
+  String get _userId => _clientsService.selectedUserId;
+
+  Future<void> _loadGoalsOnly(DateTime d) async {
+    final uid = _userId;
+    if (uid.isEmpty) return;
+    final ds = d.toIso8601String().split('T')[0];
+
+    try {
+      final [sum, gol] = await Future.wait([
+        SupabaseConfig.client
+            .from('daily_summary')
+            .select()
+            .eq('user_id', uid)
+            .eq('date', ds)
+            .maybeSingle(),
+        SupabaseConfig.client
+            .from('user_goals')
+            .select()
+            .eq('user_id', uid)
+            .eq('is_active', true)
+            .maybeSingle(),
+      ]);
+      _goals = DailyGoals(
+        proteinTarget: _toIntSafe(gol?['protein_target'], defaultValue: 100),
+        fatsTarget: _toIntSafe(gol?['fat_target'], defaultValue: 65),
+        carbsTarget: _toIntSafe(gol?['carbs_target'], defaultValue: 285),
+        caloriesTarget:
+            _toIntSafe(gol?['calories_target'], defaultValue: 2500),
+        proteinCurrent: _toIntSafe(sum?['protein_actual']),
+        fatsCurrent: _toIntSafe(sum?['fat_actual']),
+        carbsCurrent: _toIntSafe(sum?['carbs_actual']),
+        caloriesCurrent: _toIntSafe(sum?['calories_actual']),
+      );
+    } catch (e) {
+      debugPrint('❌ Goals load error: $e');
+      if (e.toString().contains('JWT expired')) {
+        await SupabaseConfig.signOut();
+      }
+      _goals = const DailyGoals.empty();
+    }
+  }
+
+  Future<void> _loadMealsOfType(MealType type, DateTime d) async {
+    _mealsCacheTime[type] = null;
+    final uid = _userId;
+    if (uid.isEmpty) return;
+    final ds = d.toIso8601String().split('T')[0];
+
+    try {
+      final mealsData = await SupabaseConfig.client
+          .from('meals')
+          .select(
+              'id, meal_type, eaten_at, comment, meal_items(id, amount_grams, product_id, product_name, calories, protein, fat, carbs)')
+          .eq('user_id', uid)
+          .eq('meal_type', type.dbValue)
+          .eq('date', ds)
+          .order('eaten_at', ascending: false);
+
+      _meals[type] = mealsData.map((j) {
+        final items = j['meal_items'] as List? ?? [];
+        final comment = j['comment'] as String?;
+
+        if (items.isEmpty) {
+          if (comment != null && comment.isNotEmpty) {
+            _typeComments[type] = comment;
+          }
+          return null;
+        }
+
+        int w = 0, c = 0, p = 0, f = 0, cb = 0;
+        String? nm;
+        for (var it in items) {
+          w += _toIntSafe(it['amount_grams']);
+          c += _toIntSafe(it['calories']);
+          p += _toIntSafe(it['protein']);
+          f += _toIntSafe(it['fat']);
+          cb += _toIntSafe(it['carbs']);
+          nm ??= it['product_name'] as String?;
+        }
+        return Meal(
+          id: j['id'] as String,
+          name: nm ?? 'Блюдо',
+          weight: '$wг',
+          calories: c,
+          protein: p,
+          fats: f,
+          carbs: cb,
+          mealType: type,
+          createdAt: DateTime.parse(j['eaten_at'] as String),
+          comment: comment,
+        );
+      }).whereType<Meal>().toList();
+    } catch (e) {
+      debugPrint('❌ Meals load error ($type): $e');
+      if (e.toString().contains('JWT expired')) {
+        await SupabaseConfig.signOut();
+      }
+    }
+  }
+
+  Future<void> load(DateTime d,
+      {MealType? loadMealsOfType, bool force = false}) async {
+    _date = d;
+    if (force) {
+      for (var t in MealType.values) {
+        _mealsCacheTime[t] = null;
+      }
+    }
+
+    _loadingGoals = true;
+    notifyListeners();
+    try {
+      await _loadGoalsOnly(d);
+    } finally {
+      _loadingGoals = false;
+      notifyListeners();
+    }
+
+    if (loadMealsOfType != null || force) {
+      _loading = true;
+      notifyListeners();
+      try {
+        if (force) {
+          await Future.wait(MealType.values.map((t) => _loadMealsOfType(t, d)));
+        } else if (loadMealsOfType != null) {
+          await _loadMealsOfType(loadMealsOfType, d);
+        }
+      } finally {
+        _loading = false;
+        notifyListeners();
+      }
+    }
+  }
+
+  Future<void> refresh() async => await load(_date, force: true);
+
+  void ensureMealsLoaded(MealType type) {
+    _loadMealsOfType(type, _date).then((_) => notifyListeners());
+  }
+
+  Future<List<Product>> getProducts(String query) async {
+    try {
+      var q = SupabaseConfig.client.from('products').select();
+      if (query.isNotEmpty) {
+        q = q.ilike('name', '%$query%');
+      }
+      final uid = _userId;
+      final response = await _retryRequest(() =>
+          q.or('user_id.is.null,user_id.eq.$uid').limit(50));
+      return response.map((j) => Product.fromJson(j)).toList();
+    } catch (e) {
+      debugPrint('❌ Get products error: $e');
+      if (e.toString().contains('JWT expired')) {
+        await SupabaseConfig.signOut();
+      }
+      return [];
+    }
+  }
+
+  Future<Product?> createProduct(
+      String name, double cal, double pro, double fat, double carb) async {
+    try {
+      final uid = _userId;
+      final res = await _retryRequest(() => SupabaseConfig.client.from('products').insert({
+        'name': name,
+        'calories': cal,
+        'protein': pro,
+        'fat': fat,
+        'carbs': carb,
+        'user_id': uid,
+      }).select().single());
+      return Product.fromJson(res);
+    } catch (e) {
+      debugPrint('❌ Create product error: $e');
+      return null;
+    }
+  }
+
+  Future<bool> updateProduct({
+    required String id,
+    required String name,
+    required double cal,
+    required double pro,
+    required double fat,
+    required double carb,
+  }) async {
+    try {
+      await SupabaseConfig.client.from('products').update({
+        'name': name,
+        'calories': cal,
+        'protein': pro,
+        'fat': fat,
+        'carbs': carb,
+      }).eq('id', id);
+      return true;
+    } catch (e) {
+      debugPrint('❌ Update product error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> deleteProduct(String productId) async {
+    try {
+      await SupabaseConfig.client.from('products').delete().eq('id', productId);
+      return true;
+    } catch (e) {
+      debugPrint('❌ Delete product error: $e');
+      return false;
+    }
+  }
+
+  Future<List<dynamic>> getAllFoodItems(String query) async {
+    try {
+      final uid = _userId;
+
+      var productsQuery = SupabaseConfig.client.from('products').select();
+      if (query.isNotEmpty) {
+        productsQuery = productsQuery.ilike('name', '%$query%');
+      }
+      final productsResponse = await _retryRequest(() => productsQuery
+          .or('user_id.is.null,user_id.eq.$uid')
+          .limit(50));
+      final products = productsResponse.map((j) => Product.fromJson(j)).toList();
+
+      var recipesQuery = SupabaseConfig.client
+          .from('recipes')
+          .select('*, recipe_products(amount_grams, product_id, products(*))');
+      if (query.isNotEmpty) {
+        recipesQuery = recipesQuery.ilike('name', '%$query%');
+      }
+      final recipesResponse = await _retryRequest(() => recipesQuery
+          .or('created_by.is.null,created_by.eq.$uid')
+          .limit(50));
+      final recipes = recipesResponse.map((j) {
+        final ingredients = (j['recipe_products'] as List? ?? []).map((rp) {
+          return RecipeIngredient(
+            product: Product.fromJson(rp['products']),
+            amountGrams: (rp['amount_grams'] as num).toDouble(),
+          );
+        }).toList();
+        return Recipe.fromJson(j, ingredients);
+      }).toList();
+
+      final all = [...products, ...recipes];
+      all.sort((a, b) {
+        final nameA = a is Product ? a.name : (a is Recipe ? a.name : '');
+        final nameB = b is Product ? b.name : (b is Recipe ? b.name : '');
+        return nameA.toLowerCase().compareTo(nameB.toLowerCase());
+      });
+      return all;
+    } catch (e) {
+      debugPrint('❌ Get all food items error: $e');
+      return [];
+    }
+  }
+
+  Future<Recipe?> createRecipe({
+    required String name,
+    String description = '',
+    required List<RecipeIngredient> ingredients,
+  }) async {
+    try {
+      final uid = _userId;
+      if (uid.isEmpty) return null;
+
+      double baseWeight = 0;
+      double totalCal = 0;
+      double totalPro = 0;
+      double totalFat = 0;
+      double totalCarb = 0;
+      
+      for (var ing in ingredients) {
+        baseWeight += ing.amountGrams;
+        double ratio = ing.amountGrams / 100.0;
+        totalCal += ing.product.calories * ratio;
+        totalPro += ing.product.protein * ratio;
+        totalFat += ing.product.fat * ratio;
+        totalCarb += ing.product.carbs * ratio;
+      }
+
+      final recipeRes = await _retryRequest(() =>
+          SupabaseConfig.client.from('recipes').insert({
+        'name': name,
+        'description': description,
+        'base_weight_grams': baseWeight,
+        'total_calories': totalCal,
+        'total_protein': totalPro,
+        'total_fat': totalFat,
+        'total_carbs': totalCarb,
+        'created_by': uid,
+      }).select('id').single());
+
+      final recipeId = recipeRes['id'] as String;
+
+      if (ingredients.isNotEmpty) {
+        final productIds = ingredients.map((ing) => ing.product.id).toList();
+        final accessible = await _retryRequest(() => SupabaseConfig.client
+            .from('products')
+            .select('id')
+            .inFilter('id', productIds)
+            .or('user_id.is.null,user_id.eq.$uid'));
+        
+        if (accessible.length != productIds.length) {
+          throw Exception('Не все продукты доступны для добавления в рецепт');
+        }
+        
+        await _retryRequest(() => SupabaseConfig.client.from('recipe_products').insert(
+          ingredients
+              .map((ing) => {
+                    'recipe_id': recipeId,
+                    'product_id': ing.product.id,
+                    'amount_grams': ing.amountGrams,
+                  })
+              .toList(),
+        ));
+      }
+
+      return Recipe(
+        id: recipeId,
+        name: name,
+        description: description,
+        baseWeightGrams: baseWeight,
+        totalCalories: totalCal,
+        totalProtein: totalPro,
+        totalFat: totalFat,
+        totalCarbs: totalCarb,
+        userId: uid,
+        ingredients: ingredients,
+      );
+    } on PostgrestException catch (e) {
+      debugPrint('❌ Create recipe PostgrestException: $e');
+      if (e.message.contains('row-level security')) {
+        _error = 'Ошибка прав доступа. Проверьте настройки RLS в Supabase для таблицы recipe_products.';
+      } else {
+        _error = 'Ошибка базы данных: ${e.message}';
+      }
+      notifyListeners();
+      return null;
+    } on SocketException catch (e) {
+      debugPrint('❌ Create recipe network error: $e');
+      _error = 'Проблема с соединением. Проверьте интернет и попробуйте снова.';
+      notifyListeners();
+      return null;
+    } catch (e) {
+      debugPrint('❌ Create recipe error: $e');
+      _error = 'Ошибка: $e';
+      notifyListeners();
+      return null;
+    }
+  }
+
+  Future<bool> addFoodItemToMeal({
+    required MealType type,
+    required dynamic item,
+    required double portionGrams,
+    String? comment,
+  }) async {
+    try {
+      final uid = _userId;
+      if (uid.isEmpty) throw Exception('Не авторизован');
+      final ds = _date.toIso8601String().split('T')[0];
+
+      final ex = await SupabaseConfig.client
+          .from('meals')
+          .select('id')
+          .eq('user_id', uid)
+          .eq('date', ds)
+          .eq('meal_type', type.dbValue)
+          .maybeSingle();
+
+      String mealId;
+      if (ex == null) {
+        mealId = (await _retryRequest(() => SupabaseConfig.client.from('meals').insert({
+          'user_id': uid,
+          'meal_type': type.dbValue,
+          'date': ds,
+          'eaten_at': DateTime.now().toIso8601String(),
+          if (comment != null && comment.isNotEmpty) 'comment': comment,
+        }).select('id').single()))['id'] as String;
+      } else {
+        mealId = ex['id'] as String;
+        if (comment != null) {
+          await SupabaseConfig.client
+              .from('meals')
+              .update({'comment': comment})
+              .eq('id', mealId);
+        }
+      }
+
+      int cal, pro, fat, cb;
+      String itemName;
+
+      if (item is Product) {
+        double ratio = portionGrams / 100.0;
+        cal = (item.calories * ratio).round();
+        pro = (item.protein * ratio).round();
+        fat = (item.fat * ratio).round();
+        cb = (item.carbs * ratio).round();
+        itemName = item.name;
+      } else if (item is Recipe) {
+        double scale = portionGrams / item.baseWeightGrams;
+        cal = (item.totalCalories * scale).round();
+        pro = (item.totalProtein * scale).round();
+        fat = (item.totalFat * scale).round();
+        cb = (item.totalCarbs * scale).round();
+        itemName = '🍳 ${item.name}';
+      } else {
+        throw Exception('Unknown food item type');
+      }
+
+      await _retryRequest(() => SupabaseConfig.client.from('meal_items').insert({
+        'meal_id': mealId,
+        'product_id': item is Product ? item.id : null,
+        'product_name': itemName,
+        'amount_grams': portionGrams,
+        'calories': cal,
+        'protein': pro,
+        'fat': fat,
+        'carbs': cb,
+      }));
+
+      _mealsCacheTime[type] = null;
+      final newMeal = Meal(
+        id: _uuid.v4(),
+        name: itemName,
+        weight: '${portionGrams.toInt()}г',
+        calories: cal,
+        protein: pro,
+        fats: fat,
+        carbs: cb,
+        mealType: type,
+        createdAt: DateTime.now(),
+        comment: comment,
+      );
+      if (_meals[type] != null) {
+        _meals[type] = [..._meals[type]!, newMeal];
+      }
+      if (_goals != null) {
+        _goals = _goals!.copyWith(
+          caloriesCurrent: _goals!.caloriesCurrent + cal,
+          proteinCurrent: _goals!.proteinCurrent + pro,
+          fatsCurrent: _goals!.fatsCurrent + fat,
+          carbsCurrent: _goals!.carbsCurrent + cb,
+        );
+      }
+      notifyListeners();
+
+      _updateDailySummaryInBackground(uid, ds);
+
+      return true;
+    } catch (e) {
+      debugPrint('❌ Add food item error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> updateComment({
+    required MealType type,
+    required DateTime date,
+    String? comment,
+  }) async {
+    try {
+      final uid = _userId;
+      if (uid.isEmpty) return false;
+      final ds = date.toIso8601String().split('T')[0];
+      final trimmed = comment?.trim().isEmpty == true ? null : comment?.trim();
+
+      _typeComments[type] = trimmed;
+      if (_meals[type]!.isNotEmpty && trimmed != null) {
+        final updated = List<Meal>.from(_meals[type]!);
+        updated[0] = updated[0].copyWith(comment: trimmed);
+        _meals[type] = updated;
+      }
+      notifyListeners();
+
+      final existing = await SupabaseConfig.client
+          .from('meals')
+          .select('id')
+          .eq('user_id', uid)
+          .eq('date', ds)
+          .eq('meal_type', type.dbValue)
+          .maybeSingle();
+
+      if (existing == null) {
+        await SupabaseConfig.client.from('meals').insert({
+          'id': _uuid.v4(),
+          'user_id': uid,
+          'meal_type': type.dbValue,
+          'date': ds,
+          'eaten_at': DateTime.now().toIso8601String(),
+          'comment': trimmed,
+        });
+      } else {
+        await SupabaseConfig.client
+            .from('meals')
+            .update({'comment': trimmed})
+            .eq('id', existing['id'] as String);
+      }
+      return true;
+    } catch (e) {
+      debugPrint('❌ updateComment error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> add({
+    required MealType type,
+    String? pid,
+    required String pname,
+    required String w,
+    required int cal,
+    required int pro,
+    required int fat,
+    required int cb,
+    String? comment,
+  }) async {
+    try {
+      final uid = _userId;
+      if (uid.isEmpty) throw Exception('Не авторизован');
+      final ds = _date.toIso8601String().split('T')[0];
+
+      final ex = await SupabaseConfig.client
+          .from('meals')
+          .select('id')
+          .eq('user_id', uid)
+          .eq('date', ds)
+          .eq('meal_type', type.dbValue)
+          .maybeSingle();
+
+      String mealId;
+      if (ex == null) {
+        mealId = (await _retryRequest(() => SupabaseConfig.client.from('meals').insert({
+          'user_id': uid,
+          'meal_type': type.dbValue,
+          'date': ds,
+          'eaten_at': DateTime.now().toIso8601String(),
+          if (comment != null && comment.isNotEmpty) 'comment': comment,
+        }).select('id').single()))['id'] as String;
+      } else {
+        mealId = ex['id'] as String;
+        if (comment != null) {
+          await SupabaseConfig.client
+              .from('meals')
+              .update({'comment': comment})
+              .eq('id', mealId);
+        }
+      }
+
+      String finalPid = pid ?? '';
+      if (pid == null) {
+        final productData = await _retryRequest(() =>
+            SupabaseConfig.client.from('products').insert({
+          'name': pname,
+          'calories': cal,
+          'protein': pro,
+          'fat': fat,
+          'carbs': cb,
+          'user_id': uid,
+        }).select('id').single());
+        finalPid = productData['id'] as String;
+      }
+
+      final weightValue = int.parse(w.replaceAll(RegExp(r'\D'), ''));
+      if (weightValue <= 0) {
+        throw Exception('Вес должен быть > 0');
+      }
+
+      await _retryRequest(() => SupabaseConfig.client.from('meal_items').insert({
+        'meal_id': mealId,
+        'product_id': finalPid,
+        'product_name': pname,
+        'amount_grams': weightValue,
+        'calories': cal,
+        'protein': pro,
+        'fat': fat,
+        'carbs': cb,
+      }));
+
+      _mealsCacheTime[type] = null;
+      final newMeal = Meal(
+        id: _uuid.v4(),
+        name: pname,
+        weight: w,
+        calories: cal,
+        protein: pro,
+        fats: fat,
+        carbs: cb,
+        mealType: type,
+        createdAt: DateTime.now(),
+        comment: comment,
+      );
+      if (_meals[type] != null) {
+        _meals[type] = [..._meals[type]!, newMeal];
+      }
+      if (_goals != null) {
+        _goals = _goals!.copyWith(
+          caloriesCurrent: _goals!.caloriesCurrent + cal,
+          proteinCurrent: _goals!.proteinCurrent + pro,
+          fatsCurrent: _goals!.fatsCurrent + fat,
+          carbsCurrent: _goals!.carbsCurrent + cb,
+        );
+      }
+      notifyListeners();
+      _updateDailySummaryInBackground(uid, ds);
+      return true;
+    } catch (e) {
+      debugPrint(' Add meal error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> delete(String mealId, MealType type) async {
+    try {
+      final uid = _userId;
+      if (uid.isEmpty) throw Exception('Не авторизован');
+
+      final items = await SupabaseConfig.client
+          .from('meal_items')
+          .select('calories, protein, fat, carbs')
+          .eq('meal_id', mealId);
+
+      int totalCal = 0, totalPro = 0, totalFat = 0, totalCarb = 0;
+      for (var item in items) {
+        totalCal += _toIntSafe(item['calories']);
+        totalPro += _toIntSafe(item['protein']);
+        totalFat += _toIntSafe(item['fat']);
+        totalCarb += _toIntSafe(item['carbs']);
+      }
+
+      await SupabaseConfig.client.from('meal_items').delete().eq('meal_id', mealId);
+      await SupabaseConfig.client
+          .from('meals')
+          .delete()
+          .eq('id', mealId)
+          .eq('user_id', uid);
+
+      final ds = _date.toIso8601String().split('T')[0];
+      await _updateDailySummaryInBackground(uid, ds);
+
+      _mealsCacheTime[type] = null;
+      await _loadGoalsOnly(_date);
+      await _loadMealsOfType(type, _date);
+
+      notifyListeners();
+      return true;
+    } catch (e) {
+      debugPrint('❌ Delete error: $e');
+      return false;
+    }
+  }
+
+  void toggle(MealType t) {
+    _expanded[t] = !(_expanded[t] ?? false);
+    if (_expanded[t] == true) {
+      ensureMealsLoaded(t);
+    }
+    notifyListeners();
+  }
+
+  Future<void> _updateDailySummaryInBackground(
+      String uid, String dateStr) async {
+    try {
+      final meals = await SupabaseConfig.client
+          .from('meals')
+          .select('meal_items(calories, protein, fat, carbs)')
+          .eq('user_id', uid)
+          .eq('date', dateStr);
+
+      int c = 0, p = 0, f = 0, cb = 0;
+      for (var m in meals) {
+        final items = m['meal_items'] as List? ?? [];
+        for (var it in items) {
+          c += _toIntSafe(it['calories']);
+          p += _toIntSafe(it['protein']);
+          f += _toIntSafe(it['fat']);
+          cb += _toIntSafe(it['carbs']);
+        }
+      }
+
+      await SupabaseConfig.client.from('daily_summary').upsert({
+        'user_id': uid,
+        'date': dateStr,
+        'calories_actual': c,
+        'protein_actual': p,
+        'fat_actual': f,
+        'carbs_actual': cb,
+      }, onConflict: 'user_id,date');
+    } catch (e) {
+      debugPrint('⚠️ Background daily_summary update failed: $e');
+    }
+  }
+}
+
+// ============================================
+//  MeasurementsService
+// ============================================
+class MeasurementsService extends ChangeNotifier {
+  final ClientsService _clientsService;
+  final _uuid = const Uuid();
+  List<Measurement> _list = [];
+  bool _loading = false;
+  String? _error;
+  DateTime? _lastLoaded;
+
+  MeasurementsService(this._clientsService);
+
+  List<Measurement> get list => _list;
+  bool get loading => _loading;
+  String? get error => _error;
+  String get _userId => _clientsService.selectedUserId;
+
+  Future<void> load({bool force = false}) async {
+    if (!force &&
+        _list.isNotEmpty &&
+        _lastLoaded != null &&
+        DateTime.now().difference(_lastLoaded!) < const Duration(minutes: 5)) {
+      return;
+    }
+    final uid = _userId;
+    if (uid.isEmpty) return;
+
+    _loading = true;
+    _error = null;
+    notifyListeners();
+    try {
+      final data = await _retryRequest(() => SupabaseConfig.client
+          .from('body_measurements')
+          .select()
+          .eq('user_id', uid)
+          .order('measured_at', ascending: false)
+          .limit(50));
+      _list = data.map((j) => Measurement.fromJson(j)).toList();
+      _lastLoaded = DateTime.now();
+    } catch (e) {
+      _error = 'Ошибка: $e';
+      if (e.toString().contains('JWT expired')) {
+        await SupabaseConfig.signOut();
+      }
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<bool> save({
+    required DateTime at,
+    double? w,
+    double? ch,
+    double? wa,
+    double? hi,
+  }) async {
+    final uid = _userId;
+    if (uid.isEmpty) return false;
+    try {
+      final m = Measurement(
+        id: _uuid.v4(),
+        userId: uid,
+        measuredAt: at,
+        weightKg: w,
+        chestCm: ch,
+        waistCm: wa,
+        hipsCm: hi,
+      );
+      await _retryRequest(() => SupabaseConfig.client.from('body_measurements').insert(m.toJson()));
+      _list.insert(0, m);
+      _list.sort((a, b) => b.measuredAt.compareTo(a.measuredAt));
+      _lastLoaded = null;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _error = 'Ошибка: $e';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> update({
+    required String id,
+    required DateTime at,
+    double? w,
+    double? ch,
+    double? wa,
+    double? hi,
+  }) async {
+    try {
+      final data = <String, dynamic>{
+        'measured_at': at.toIso8601String(),
+        if (w != null) 'weight_kg': w,
+        if (ch != null) 'chest_cm': ch,
+        if (wa != null) 'waist_cm': wa,
+        if (hi != null) 'hips_cm': hi,
+      };
+      if (data.isEmpty) {
+        return true;
+      }
+      await _retryRequest(() => SupabaseConfig.client
+          .from('body_measurements')
+          .update(data)
+          .eq('id', id));
+      final i = _list.indexWhere((m) => m.id == id);
+      if (i != -1) {
+        _list[i] = _list[i].copyWith(
+          measuredAt: at,
+          weightKg: w,
+          chestCm: ch,
+          waistCm: wa,
+          hipsCm: hi,
+        );
+        notifyListeners();
+      }
+      return true;
+    } catch (e) {
+      _error = 'Ошибка: $e';
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<bool> delete(String id) async {
+    try {
+      await _retryRequest(() => SupabaseConfig.client.from('body_measurements').delete().eq('id', id));
+      _list.removeWhere((m) => m.id == id);
+      _lastLoaded = null;
+      notifyListeners();
+      return true;
+    } catch (e) {
+      _error = 'Ошибка: $e';
+      notifyListeners();
+      return false;
+    }
+  }
+}
+
+// ============================================
+//  StatsService
+// ============================================
+class StatsService extends ChangeNotifier {
+  final ClientsService _clientsService;
+  StatsData? _stats;
+  bool _loading = false, _refreshing = false;
+  String? _error;
+  DateTime _start = DateTime.now().subtract(const Duration(days: 30));
+  DateTime _end = DateTime.now();
+  DateTime? _lastLoaded;
+
+  StatsService(this._clientsService);
+
+  StatsData? get stats => _stats;
+  bool get loading => _loading;
+  bool get refreshing => _refreshing;
+  String? get error => _error;
+  DateTime get startDate => _start;
+  DateTime get endDate => _end;
+  String get _userId => _clientsService.selectedUserId;
+
+  Future<void> load({DateTime? start, DateTime? end, bool force = false}) async {
+    if (!force &&
+        _stats != null &&
+        _lastLoaded != null &&
+        DateTime.now().difference(_lastLoaded!) < const Duration(minutes: 3)) {
+      return;
+    }
+    if (start != null) {
+      _start = start;
+    }
+    if (end != null) {
+      _end = end;
+    }
+
+    _loading = true;
+    _error = null;
+    notifyListeners();
+    try {
+      final uid = _userId;
+      if (uid.isEmpty) throw Exception('Не авторизован');
+      final s = _start.toIso8601String().split('T')[0];
+      final e = _end.toIso8601String().split('T')[0];
+
+      final [nutr, measurements] = await Future.wait([
+        _retryRequest(() => SupabaseConfig.client
+            .from('daily_summary')
+            .select('protein_actual, fat_actual, carbs_actual, calories_actual')
+            .eq('user_id', uid)
+            .gte('date', s)
+            .lte('date', e)),
+        _retryRequest(() => SupabaseConfig.client
+            .from('body_measurements')
+            .select('measured_at, weight_kg, chest_cm, waist_cm, hips_cm')
+            .eq('user_id', uid)
+            .gte('measured_at', _start.toIso8601String())
+            .lte('measured_at', _end.toIso8601String())
+            .order('measured_at', ascending: true)),
+      ]);
+
+      int tp = 0, tf = 0, tc = 0, tk = 0;
+      for (final r in nutr) {
+        tp += _toIntSafe(r['protein_actual']);
+        tf += _toIntSafe(r['fat_actual']);
+        tc += _toIntSafe(r['carbs_actual']);
+        tk += _toIntSafe(r['calories_actual']);
+      }
+      final ns = NutritionStats.fromMacros(
+        protein: tp,
+        fats: tf,
+        carbs: tc,
+        calories: tk,
+      );
+
+      List<TrendPoint> weightTrend = [], chestTrend = [], waistTrend = [], hipsTrend = [];
+      for (final row in measurements) {
+        final date = DateTime.parse(row['measured_at'] as String);
+        if (row['weight_kg'] != null) {
+          weightTrend.add(TrendPoint(date: date, value: _toDoubleSafe(row['weight_kg'])));
+        }
+        if (row['chest_cm'] != null) {
+          chestTrend.add(TrendPoint(date: date, value: _toDoubleSafe(row['chest_cm'])));
+        }
+        if (row['waist_cm'] != null) {
+          waistTrend.add(TrendPoint(date: date, value: _toDoubleSafe(row['waist_cm'])));
+        }
+        if (row['hips_cm'] != null) {
+          hipsTrend.add(TrendPoint(date: date, value: _toDoubleSafe(row['hips_cm'])));
+        }
+      }
+
+      _stats = StatsData(
+        nutrition: ns,
+        weightTrend: weightTrend,
+        chestTrend: chestTrend,
+        waistTrend: waistTrend,
+        hipsTrend: hipsTrend,
+        streakDays: await _streak(uid, e),
+      );
+      _lastLoaded = DateTime.now();
+    } catch (e) {
+      _error = 'Ошибка: $e';
+      if (e.toString().contains('JWT expired')) {
+        await SupabaseConfig.signOut();
+      }
+    } finally {
+      _loading = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> refresh() async {
+    _refreshing = true;
+    notifyListeners();
+    await load(force: true);
+    _refreshing = false;
+    notifyListeners();
+  }
+
+  Future<int> _streak(String uid, String end) async {
+    try {
+      final r = await _retryRequest(() => SupabaseConfig.client
+          .from('daily_summary')
+          .select('calories_actual')
+          .eq('user_id', uid)
+          .order('date', ascending: false)
+          .limit(30));
+      if (r.isEmpty) return 0;
+
+      final g = await _retryRequest(() => SupabaseConfig.client
+          .from('user_goals')
+          .select('calories_target')
+          .eq('user_id', uid)
+          .eq('is_active', true)
+          .maybeSingle());
+      final target =
+          g != null ? _toIntSafe(g['calories_target'], defaultValue: 2500) : 2500;
+
+      int streak = 0;
+      for (final row in r) {
+        final act = _toIntSafe(row['calories_actual']);
+        final ratio = target > 0 ? act / target : 0;
+        if (ratio >= 0.9 && ratio <= 1.1) {
+          streak++;
+        } else {
+          break;
+        }
+      }
+      return streak;
+    } catch (_) {
+      return 0;
+    }
+  }
+}
