@@ -9,7 +9,41 @@ import 'ui/auth_screen.dart';
 import 'ui/main_shell.dart';
 import 'ui/trainer_clients_screen.dart';
 
+// 🔥 ГЛОБАЛЬНЫЙ КЛЮЧ НАВИГАТОРА
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+// 🔥 ГЛОБАЛЬНАЯ ФУНКЦИЯ ВЫХОДА — НЕ ЗАВИСИТ ОТ КОНТЕКСТА ВИДЖЕТА
+Future<void> signOutGlobally() async {
+  // Получаем контекст из глобального ключа
+  final navContext = navigatorKey.currentContext;
+  if (navContext == null) {
+    debugPrint('❌ No navigator context for sign out');
+    return;
+  }
+  
+  try {
+    // Получаем сервисы через глобальный контекст
+    final authService = Provider.of<AuthService>(navContext, listen: false);
+    final clientsService = Provider.of<ClientsService>(navContext, listen: false);
+    
+    // Выполняем выход
+    await authService.signOut();
+    clientsService.clear();
+    
+    // 🔥 Небольшая задержка перед навигацией для стабильности
+    await Future.delayed(const Duration(milliseconds: 100));
+    
+    // Навигация через глобальный ключ
+    final navigator = navigatorKey.currentState;
+    // 🔥 Проверяем, что контекст еще активен перед навигацией
+    if (navigator != null && navContext.mounted) {
+      await navigator.pushReplacementNamed('/');
+    }
+  } catch (e) {
+    debugPrint('❌ Global sign out error: $e');
+    showGlobalError('Ошибка выхода: $e');
+  }
+}
 
 void showGlobalError(String message) {
   final context = navigatorKey.currentContext;
@@ -116,7 +150,7 @@ class NutriLinkApp extends StatelessWidget {
         child: MaterialApp(
           title: AppStrings.appName,
           debugShowCheckedModeBanner: false,
-          navigatorKey: navigatorKey,
+          navigatorKey: navigatorKey, // 🔥 Добавляем глобальный ключ
           localizationsDelegates: const [
             GlobalMaterialLocalizations.delegate,
             GlobalWidgetsLocalizations.delegate,

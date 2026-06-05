@@ -2,11 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../core/config.dart';
 import '../data/models.dart';
+import 'widgets/custom_tab_icon.dart';
 
+// ==========================================
+// ✅ AUTH TEXT FIELD (Обновлён для кастомных иконок)
+// ==========================================
 class AuthTextField extends StatelessWidget {
   final TextEditingController controller;
   final String label, hint;
-  final IconData icon;
+  final String? iconPath; // 🔥 Теперь опциональный путь к иконке
+  final IconData? fallbackIcon; // 🔥 Резервная стандартная иконка
   final bool obscureText;
   final Widget? suffixIcon;
   final TextInputType? keyboardType;
@@ -17,7 +22,8 @@ class AuthTextField extends StatelessWidget {
     required this.controller,
     required this.label,
     required this.hint,
-    required this.icon,
+    this.iconPath, // 🔥 Опциональный
+    this.fallbackIcon, // 🔥 Опциональный
     this.obscureText = false,
     this.suffixIcon,
     this.keyboardType,
@@ -44,7 +50,20 @@ class AuthTextField extends StatelessWidget {
               decoration: InputDecoration(
                 hintText: hint,
                 hintStyle: const TextStyle(color: AppColors.textHint),
-                prefixIcon: Icon(icon, color: AppColors.accent),
+                // 🔥 Используем кастомную иконку или стандартную
+                prefixIcon: iconPath != null
+                    ? CustomIcon(
+                        path: iconPath!,
+                        width: 20,
+                        height: 20,
+                        color: AppColors.accent,
+                        fallback: fallbackIcon != null
+                            ? Icon(fallbackIcon!, color: AppColors.accent, size: 20)
+                            : null,
+                      )
+                    : fallbackIcon != null
+                        ? Icon(fallbackIcon, color: AppColors.accent, size: 20)
+                        : null,
                 suffixIcon: suffixIcon,
                 border: InputBorder.none,
                 contentPadding:
@@ -57,6 +76,9 @@ class AuthTextField extends StatelessWidget {
       );
 }
 
+// ==========================================
+// ✅ ROLE SELECTOR (без изменений, стандартные иконки)
+// ==========================================
 class RoleSelector extends StatelessWidget {
   final UserRole selectedRole;
   final ValueChanged<UserRole> onChanged;
@@ -139,6 +161,9 @@ class _RoleCard extends StatelessWidget {
       );
 }
 
+// ==========================================
+// ✅ GOALS SECTION (без изменений)
+// ==========================================
 class GoalsSection extends StatelessWidget {
   final DailyGoals goals;
   const GoalsSection({super.key, required this.goals});
@@ -213,6 +238,9 @@ class _Cell extends StatelessWidget {
   }
 }
 
+// ==========================================
+// ✅ MEAL SECTION (без изменений, imagePath уже используется)
+// ==========================================
 class MealSection extends StatelessWidget {
   final String title, imagePath;
   final int totalCalories;
@@ -381,6 +409,9 @@ class _MealItem extends StatelessWidget {
       );
 }
 
+// ==========================================
+// ✅ MEASUREMENT FIELD (без изменений)
+// ==========================================
 class MeasurementField extends StatelessWidget {
   final TextEditingController controller;
   final String label, hint, suffix;
@@ -434,6 +465,9 @@ class MeasurementField extends StatelessWidget {
       );
 }
 
+// ==========================================
+// ✅ STATS ROW (без изменений)
+// ==========================================
 class StatsRow extends StatelessWidget {
   final String label, value, percent;
   final Color color;
@@ -490,6 +524,9 @@ class StatsRow extends StatelessWidget {
       );
 }
 
+// ==========================================
+// ✅ PIE CHART & LEGEND (без изменений)
+// ==========================================
 class PieChartWidget extends StatelessWidget {
   final double proteinPercent, fatsPercent, carbsPercent;
   const PieChartWidget(

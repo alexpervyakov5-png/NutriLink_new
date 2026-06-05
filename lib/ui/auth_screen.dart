@@ -8,9 +8,11 @@ import '../core/config.dart';
 import '../data/models.dart';
 import '../data/services.dart';
 import 'widgets.dart';
+import 'widgets/custom_tab_icon.dart';
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
+
   @override
   State<AuthScreen> createState() => _AuthScreenState();
 }
@@ -125,14 +127,19 @@ class _AuthScreenState extends State<AuthScreen> {
   void _showError(String message) {
     if (!mounted) return;
     
-    // 🔥 Используем postFrameCallback чтобы гарантировать, что Scaffold готов
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Row(
             children: [
-              const Icon(Icons.error_outline, color: Colors.white, size: 20),
+              CustomIcon(
+                path: '${AppStrings.assetIcons}error.png',
+                width: 20,
+                height: 20,
+                color: Colors.white,
+                fallback: const Icon(Icons.error_outline, color: Colors.white, size: 20),
+              ),
               const SizedBox(width: 8),
               Expanded(child: Text(message, style: const TextStyle(color: Colors.white))),
             ],
@@ -159,7 +166,13 @@ class _AuthScreenState extends State<AuthScreen> {
         SnackBar(
           content: Row(
             children: [
-              const Icon(Icons.check_circle, color: Colors.white, size: 20),
+              CustomIcon(
+                path: '${AppStrings.assetIcons}check.png',
+                width: 20,
+                height: 20,
+                color: Colors.white,
+                fallback: const Icon(Icons.check_circle, color: Colors.white, size: 20),
+              ),
               const SizedBox(width: 8),
               Expanded(child: Text(message, style: const TextStyle(color: Colors.white))),
             ],
@@ -190,14 +203,12 @@ class _AuthScreenState extends State<AuthScreen> {
       
       if (!mounted) return;
       
-      // 🔥 Упрощённая и надёжная обработка результата
       if (result == true) {
         _showSuccess(_isLogin ? 'Добро пожаловать!' : 'Аккаунт создан!');
         _emailCtrl.clear();
         _passCtrl.clear();
         if (!_isLogin) _nameCtrl.clear();
       } else {
-        // 🔥 Гарантированно показываем ошибку
         final errorMessage = auth.error?.isNotEmpty == true 
             ? _formatAuthError(auth.error!, isLogin: _isLogin)
             : (_isLogin 
@@ -247,13 +258,18 @@ class _AuthScreenState extends State<AuthScreen> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
+                    // 🔥 Логотип БЕЗ color параметра, чтобы сохранить оригинальные цвета
                     Image.asset(
                       '${AppStrings.assetIcons}nutrilink.png',
                       width: 48,
                       height: 48,
-                      errorBuilder: (_, __, ___) =>
-                          const Icon(Icons.restaurant,
-                              color: AppColors.accentLight, size: 48),
+                      errorBuilder: (_, __, ___) => CustomIcon(
+                        path: '${AppStrings.assetIcons}nutrilink.png',
+                        width: 48,
+                        height: 48,
+                        // color удалён
+                        fallback: const Icon(Icons.restaurant, size: 48),
+                      ),
                     ),
                     const SizedBox(width: 12),
                     const Text(
@@ -282,7 +298,8 @@ class _AuthScreenState extends State<AuthScreen> {
                     controller: _nameCtrl,
                     label: 'Имя',
                     hint: 'Ваше имя',
-                    icon: Icons.person,
+                    iconPath: '${AppStrings.assetIcons}person.png',
+                    fallbackIcon: Icons.person,
                     validator: (v) {
                       if (v == null || v.trim().isEmpty) return 'Введите имя';
                       if (v.trim().length < 2) return 'Имя должно быть не менее 2 символов';
@@ -295,7 +312,8 @@ class _AuthScreenState extends State<AuthScreen> {
                   controller: _emailCtrl,
                   label: 'Email',
                   hint: 'example@mail.com',
-                  icon: Icons.email,
+                  iconPath: '${AppStrings.assetIcons}email.png',
+                  fallbackIcon: Icons.email,
                   keyboardType: TextInputType.emailAddress,
                   validator: (v) {
                     if (v == null || v.trim().isEmpty) return 'Введите email';
@@ -310,12 +328,22 @@ class _AuthScreenState extends State<AuthScreen> {
                   controller: _passCtrl,
                   label: 'Пароль',
                   hint: '••••••••',
-                  icon: Icons.lock,
+                  iconPath: '${AppStrings.assetIcons}lock.png',
+                  fallbackIcon: Icons.lock,
                   obscureText: _obscure,
                   suffixIcon: IconButton(
-                    icon: Icon(
-                      _obscure ? Icons.visibility : Icons.visibility_off,
+                    icon: CustomIcon(
+                      path: _obscure 
+                          ? '${AppStrings.assetIcons}visibility_off.png' 
+                          : '${AppStrings.assetIcons}visibility.png',
+                      width: 20,
+                      height: 20,
                       color: AppColors.textHint,
+                      fallback: Icon(
+                        _obscure ? Icons.visibility : Icons.visibility_off, 
+                        color: AppColors.textHint, 
+                        size: 20,
+                      ),
                     ),
                     onPressed: () => setState(() => _obscure = !_obscure),
                   ),
@@ -449,7 +477,8 @@ class _AuthScreenState extends State<AuthScreen> {
               controller: emailCtrl,
               label: 'Email',
               hint: 'example@mail.com',
-              icon: Icons.email,
+              iconPath: '${AppStrings.assetIcons}email.png',
+              fallbackIcon: Icons.email,
               keyboardType: TextInputType.emailAddress,
             ),
           ],

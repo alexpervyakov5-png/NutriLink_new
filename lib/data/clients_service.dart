@@ -47,18 +47,36 @@ class ClientsService extends ChangeNotifier {
   bool get isViewingClient => _selectedClient != null && !_selectedClient!.isMe;
   bool get isViewingOwnData => _selectedClient?.isMe == true || !_isTrainer;
 
+  // 🔥 ИСПРАВЛЕНО: безопасный getter без null assertion operator
   String get selectedUserId {
-    final result = _selectedClient?.id ?? SupabaseConfig.currentUserId!;
+    final clientUserId = _selectedClient?.id;
+    final currentUserId = SupabaseConfig.currentUserId;
+    
+    // 🔥 Приоритет: выбранный клиент > текущий пользователь > пустая строка
+    final result = clientUserId ?? currentUserId ?? '';
+    
     if (kDebugMode) {
-      debugPrint('🔍 [Instance #$_instanceId] selectedUserId: "${_selectedClient?.name}" → "$result"');
+      debugPrint('🔍 [Instance #$_instanceId] selectedUserId: '
+          'client="${_selectedClient?.name}" → "$result"');
     }
+    
+    // 🔥 Если результат пустой, логируем предупреждение
+    if (result.isEmpty) {
+      debugPrint('⚠️ [Instance #$_instanceId] selectedUserId is empty - user may be signed out');
+    }
+    
     return result;
   }
 
   Future<void> loadClients() async {
     if (_isInitialized) return;
+    
+    // 🔥 Безопасное получение currentUserId
     final currentUserId = SupabaseConfig.currentUserId;
-    if (currentUserId == null) return;
+    if (currentUserId == null || currentUserId.isEmpty) {
+      debugPrint('⚠️ loadClients: No authenticated user (currentUserId is null/empty)');
+      return;
+    }
 
     _loading = true;
     _error = null;
@@ -140,6 +158,8 @@ class ClientsService extends ChangeNotifier {
   }
 
   void resetToMe() {
+    if (_clients.isEmpty) return;
+    
     final me = _clients.firstWhere(
       (c) => c.isMe,
       orElse: () => _clients.first,
@@ -148,10 +168,18 @@ class ClientsService extends ChangeNotifier {
   }
 
   void clear() {
+    debugPrint('🧹 [Instance #$_instanceId] Clearing ClientsService');
     _clients.clear();
     _selectedClient = null;
     _isTrainer = false;
     _isInitialized = false;
+    _error = null;
     notifyListeners();
+  }
+  
+  // 🔥 НОВЫЙ МЕТОД: проверка, авторизован ли пользователь
+  bool get isAuthenticated {
+    final userId = SupabaseConfig.currentUserId;
+    return userId != null && userId.isNotEmpty;
   }
 }

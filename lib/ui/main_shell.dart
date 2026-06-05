@@ -13,6 +13,7 @@ import 'stats_screen.dart';
 import 'profile_screen.dart';
 import 'widgets/client_selector.dart';
 import 'widgets/custom_tab_icon.dart';
+import '../main.dart'; // 🔥 Импорт для доступа к signOutGlobally и navigatorKey
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -53,9 +54,15 @@ class _MainShellState extends State<MainShell> {
 
   @override
   void dispose() {
+    // 🔥 Сначала удаляем listener перед dispose
     if (_clientsInitialized) {
-      context.read<ClientsService>().removeListener(_onClientChanged);
+      try {
+        context.read<ClientsService>().removeListener(_onClientChanged);
+      } catch (e) {
+        debugPrint('⚠️ Error removing listener: $e');
+      }
     }
+    // 🔥 Затем вызываем super.dispose()
     super.dispose();
   }
 
@@ -137,24 +144,7 @@ class _MainShellState extends State<MainShell> {
     );
   }
 
-  Future<void> _signOut(BuildContext ctx) async {
-    if (_isSigningOut) return;
-    setState(() => _isSigningOut = true);
-    try {
-      await context.read<AuthService>().signOut();
-      context.read<ClientsService>().clear();
-      
-      if (!ctx.mounted) return;
-      if (!mounted) return;
-      
-      Navigator.of(ctx).pushNamedAndRemoveUntil('/', (route) => false);
-    } catch (e) {
-      if (!ctx.mounted) return;
-      _showError(ctx, _formatError(e));
-    } finally {
-      if (mounted) setState(() => _isSigningOut = false);
-    }
-  }
+  // 🔥 МЕТОД _signOut() УДАЛЁН — используем signOutGlobally() из main.dart
 
   @override
   Widget build(BuildContext context) {
@@ -166,12 +156,13 @@ class _MainShellState extends State<MainShell> {
         title: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            // 🔥 Логотип БЕЗ color параметра, чтобы сохранить оригинальные цвета
             CustomIcon(
               path: '${AppStrings.assetIcons}nutrilink.png',
               width: 32,
               height: 32,
-              color: AppColors.accentLight,
-              fallback: const Icon(Icons.restaurant, color: AppColors.accentLight, size: 32),
+              // color: AppColors.accentLight, // <--- УДАЛЕНО!
+              fallback: const Icon(Icons.restaurant, size: 32),
             ),
             const SizedBox(width: 8),
             const Text(
@@ -312,7 +303,7 @@ class _MainShellState extends State<MainShell> {
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
-      builder: (context) => Column(
+      builder: (menuContext) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           const SizedBox(height: 16),
@@ -337,9 +328,15 @@ class _MainShellState extends State<MainShell> {
             ),
             title: const Text('Профиль', style: TextStyle(color: AppColors.textPrimary)),
             onTap: () {
-              if (!context.mounted) return;
-              Navigator.pop(context);
-              Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen()));
+              Navigator.of(menuContext).pop();
+              Future.microtask(() {
+                if (mounted) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (_) => const ProfileScreen()),
+                  );
+                }
+              });
             },
           ),
           ListTile(
@@ -354,10 +351,18 @@ class _MainShellState extends State<MainShell> {
                   ),
             title: const Text('Выйти', style: TextStyle(color: Colors.red)),
             enabled: !_isSigningOut,
-            onTap: () {
-              if (!context.mounted) return;
-              Navigator.pop(context);
-              _signOut(context);
+            onTap: () async {
+              // 🔥 Закрываем меню
+              Navigator.of(menuContext).pop();
+              
+              // 🔥 Ждем закрытия меню
+              await Future.delayed(const Duration(milliseconds: 300));
+              
+              // 🔥 Проверяем, что виджет еще активен
+              if (!mounted) return;
+              
+              // 🔥 ВЫЗЫВАЕМ ГЛОБАЛЬНУЮ ФУНКЦИЮ — она не зависит от контекста виджета!
+              signOutGlobally();
             },
           ),
         ],
