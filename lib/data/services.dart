@@ -3,12 +3,14 @@ import 'dart:io' show SocketException;
 import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' hide AuthUser;
+
 import '../core/config.dart';
+import '../core/error_handler.dart';
 import 'clients_service.dart';
 import 'models.dart';
 
 // ============================================
-//  ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
+// ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // ============================================
 int _toIntSafe(dynamic v, {int defaultValue = 0}) {
   if (v == null) return defaultValue;
@@ -26,14 +28,16 @@ double _toDoubleSafe(dynamic v, {double defaultValue = 0.0}) {
   return defaultValue;
 }
 
-Future<T> _retryRequest<T>(Future<T> Function() request, {int maxAttempts = 3}) async {
+Future<T> _retryRequest<T>(Future<T> Function() request,
+    {int maxAttempts = 3}) async {
   int attempt = 0;
   while (attempt < maxAttempts) {
     try {
       return await request();
     } on SocketException catch (e) {
       attempt++;
-      debugPrint('⚠️ Network error (attempt $attempt/$maxAttempts): $e');
+      debugPrint(
+          '⚠️ Network error (attempt $attempt/$maxAttempts): $e');
       if (attempt == maxAttempts) rethrow;
       await Future.delayed(Duration(milliseconds: 500 * attempt));
     } on PostgrestException catch (e) {
@@ -56,7 +60,54 @@ UserRole _parseRoleFromId(String? roleId) {
 }
 
 // ============================================
-//  AuthService
+// БАЗОВЫЙ СЕРВИС С ПОДДЕРЖКОЙ КЛИЕНТОВ
+// ============================================
+mixin ClientAwareService on ChangeNotifier {
+  ClientsService get clientsService;
+  String get _userId => clientsService.selectedUserId;
+  DateTime? _lastLoaded;
+  String? _lastLoadedUserId;
+
+  bool _shouldReload({required bool force}) {
+    final uid = _userId;
+    if (uid.isEmpty) return false;
+    
+    if (_lastLoadedUserId != uid) {
+      debugPrint(
+          '🔄 ${runtimeType}: User changed ($_lastLoadedUserId → $uid) - FORCING RELOAD');
+      _lastLoadedUserId = uid;
+      return true;
+    }
+    
+    if (!force &&
+        _lastLoaded != null &&
+        DateTime.now().difference(_lastLoaded!) < const Duration(minutes: 5)) {
+      debugPrint('📋 ${runtimeType}: using cached data for $uid');
+      return false;
+    }
+    
+    return true;
+  }
+
+  void _onCacheLoaded() {
+    _lastLoaded = DateTime.now();
+    _lastLoadedUserId = _userId;
+  }
+
+  void _onClientChanged() {
+    final newUserId = clientsService.selectedUserId;
+    if (_lastLoadedUserId != newUserId) {
+      debugPrint(
+          '🔄 ${runtimeType}: Client changed ($_lastLoadedUserId → $newUserId), clearing cache');
+      _lastLoaded = null;
+      _lastLoadedUserId = newUserId;
+      notifyListeners();
+    }
+  }
+}
+
+// ============================================
+// AuthService
 // ============================================
 class AuthService extends ChangeNotifier {
   final SupabaseClient _supabase = SupabaseConfig.client;
@@ -91,7 +142,7 @@ class AuthService extends ChangeNotifier {
             .select('username, role_id, code')
             .eq('id', u.id)
             .maybeSingle());
-            
+
         _user = AuthUser(
           id: u.id,
           email: u.email ?? '',
@@ -102,7 +153,7 @@ class AuthService extends ChangeNotifier {
         );
       }
     } catch (e) {
-      _error = 'Ошибка сессии: $e';
+      _error = ErrorHandler.format(e, context: 'session');
       debugPrint('❌ checkSession error: $e');
     } finally {
       _loading = false;
@@ -112,7 +163,7 @@ class AuthService extends ChangeNotifier {
 
   String _mapAuthError(String message) {
     final msg = message.toLowerCase();
-    if (msg.contains('invalid login credentials') || 
+    if (msg.contains('invalid login credentials') ||
         msg.contains('invalid credentials') ||
         msg.contains('user not found') ||
         msg.contains('wrong password')) {
@@ -127,7 +178,8 @@ class AuthService extends ChangeNotifier {
     if (msg.contains('weak password')) {
       return 'Пароль слишком слабый. Минимум 6 символов';
     }
-    if (msg.contains('user already registered') || msg.contains('already exists')) {
+    if (msg.contains('user already registered') ||
+        msg.contains('already exists')) {
       return 'Пользователь с таким email уже зарегистрирован';
     }
     return 'Ошибка авторизации: $message';
@@ -139,24 +191,25 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final result = await _retryRequest(() => _supabase.auth.signInWithPassword(
-        email: email.trim(),
-        password: password,
-      ));
-      
+      final result = await _retryRequest(() =>
+          _supabase.auth.signInWithPassword(
+            email: email.trim(),
+            password: password,
+          ));
+
       if (result.user == null) {
         _error = 'Неверный email или пароль';
         _loading = false;
         notifyListeners();
         return false;
       }
-      
+
       final d = await _retryRequest(() => _supabase
           .from('users')
           .select('username, role_id, code')
           .eq('id', result.user!.id)
           .maybeSingle());
-          
+
       _user = AuthUser(
         id: result.user!.id,
         email: result.user!.email ?? '',
@@ -165,11 +218,10 @@ class AuthService extends ChangeNotifier {
         role: _parseRoleFromId(d?['role_id'] as String?),
         code: d?['code'] as String?,
       );
-      
+
       _loading = false;
       notifyListeners();
       return true;
-
     } on AuthException catch (e) {
       debugPrint('SignIn AuthException: ${e.message} (code: ${e.code})');
       _error = _mapAuthError(e.message);
@@ -201,17 +253,19 @@ class AuthService extends ChangeNotifier {
     _loading = true;
     _error = null;
     notifyListeners();
-    
+
     try {
       debugPrint('🔐 [1/5] SignUp started: $email as $role');
-      
+
       String? roleId;
       if (role == UserRole.trainer) {
-        roleId = SupabaseConfig.trainerRoleId ?? await SupabaseConfig.getTrainerRoleId();
+        roleId = SupabaseConfig.trainerRoleId ??
+            await SupabaseConfig.getTrainerRoleId();
       } else {
-        roleId = SupabaseConfig.clientRoleId ?? await SupabaseConfig.getClientRoleId();
+        roleId = SupabaseConfig.clientRoleId ??
+            await SupabaseConfig.getClientRoleId();
       }
-      
+
       if (roleId == null) {
         _error = 'Ошибка: не удалось определить роль';
         debugPrint('❌ [1/5] roleId is null');
@@ -222,12 +276,13 @@ class AuthService extends ChangeNotifier {
       debugPrint('✅ [1/5] roleId: $roleId');
 
       debugPrint('👤 [2/5] Creating auth user...');
-      final authResult = await _retryRequest(() => _supabase.auth.signUp(
-        email: email.trim(),
-        password: password,
-        data: {'username': username, 'role_id': roleId},
-      ));
-      
+      final authResult = await _retryRequest(() =>
+          _supabase.auth.signUp(
+            email: email.trim(),
+            password: password,
+            data: {'username': username, 'role_id': roleId},
+          ));
+
       if (authResult.user == null) {
         _error = 'Ошибка: не удалось создать аккаунт в Auth';
         debugPrint('❌ [2/5] Auth user creation failed');
@@ -256,14 +311,15 @@ class AuthService extends ChangeNotifier {
       if (role == UserRole.trainer) {
         debugPrint('🎯 [4/5] Creating trainer goals...');
         try {
-          await _retryRequest(() => _supabase.from('user_goals').insert({
-            'user_id': userId,
-            'calories_target': 2500,
-            'protein_target': 150,
-            'fat_target': 80,
-            'carbs_target': 280,
-            'is_active': true,
-          }));
+          await _retryRequest(() =>
+              _supabase.from('user_goals').insert({
+                'user_id': userId,
+                'calories_target': 2500,
+                'protein_target': 150,
+                'fat_target': 80,
+                'carbs_target': 280,
+                'is_active': true,
+              }));
           debugPrint('✅ [4/5] Goals created');
         } catch (e) {
           debugPrint('⚠️ [4/5] Could not create goals: $e');
@@ -291,12 +347,11 @@ class AuthService extends ChangeNotifier {
         role: role,
         code: userCode,
       );
-      
+
       debugPrint('✅ [5/5] SignUp completed: ${_user?.email}');
       _loading = false;
       notifyListeners();
       return true;
-      
     } on AuthException catch (e) {
       debugPrint('❌ AuthException: ${e.message} (code: ${e.code})');
       _error = _mapAuthError(e.message);
@@ -305,9 +360,13 @@ class AuthService extends ChangeNotifier {
       debugPrint('   Details: ${e.details}');
       debugPrint('   Hint: ${e.hint}');
       final detailsStr = e.details?.toString() ?? '';
-      if (e.message.contains('duplicate') || e.message.contains('unique')) {
-        _error = detailsStr.contains('email') ? 'Email уже зарегистрирован' : 'Имя пользователя занято';
-      } else if (e.message.contains('role_id') || e.message.contains('foreign key')) {
+      if (e.message.contains('duplicate') ||
+          e.message.contains('unique')) {
+        _error = detailsStr.contains('email')
+            ? 'Email уже зарегистрирован'
+            : 'Имя пользователя занято';
+      } else if (e.message.contains('role_id') ||
+          e.message.contains('foreign key')) {
         _error = 'Ошибка: не удалось определить роль';
       } else {
         _error = 'Ошибка базы данных: ${e.message}';
@@ -319,7 +378,7 @@ class AuthService extends ChangeNotifier {
       debugPrint('Stack: $stack');
       _error = 'Произошла ошибка: $e';
     }
-    
+
     _loading = false;
     notifyListeners();
     return false;
@@ -337,46 +396,36 @@ class AuthService extends ChangeNotifier {
 }
 
 // ============================================
-//  ProfileService
+// ProfileService
 // ============================================
-class ProfileService extends ChangeNotifier {
-  final ClientsService _clientsService;
+class ProfileService extends ChangeNotifier with ClientAwareService {
+  @override
+  final ClientsService clientsService;
   Profile? _profile;
   bool _loading = false, _saving = false;
   String? _error;
-  DateTime? _lastLoaded;
-  String? _lastLoadedUserId;
-
-  ProfileService(this._clientsService) {
-    _clientsService.addListener(_onClientChanged);
-  }
-
-  @override
-  void dispose() {
-    _clientsService.removeListener(_onClientChanged);
-    super.dispose();
-  }
-
-  void _onClientChanged() {
-    final newUserId = _clientsService.selectedUserId;
-    // 🔥 ИСПРАВЛЕНО: Проверяем != без проверки на null, чтобы срабатывало при первой смене
-    if (_lastLoadedUserId != newUserId) {
-      debugPrint('🔄 ProfileService: Client changed ($_lastLoadedUserId → $newUserId), clearing cache');
-      _lastLoaded = null;
-      _lastLoadedUserId = newUserId; // 🔥 Сразу обновляем, чтобы избежать повторных срабатываний
-      _profile = null;
-      notifyListeners();
-      // 🔥 Автоматически перезагружаем данные
-      load(force: true);
-    }
-  }
 
   Profile? get profile => _profile;
   bool get loading => _loading;
   bool get saving => _saving;
   String? get error => _error;
-  
-  String get _userId => _clientsService.selectedUserId;
+
+  ProfileService(this.clientsService) {
+    clientsService.addListener(_onClientChanged);
+  }
+
+  @override
+  void dispose() {
+    clientsService.removeListener(_onClientChanged);
+    super.dispose();
+  }
+
+  @override
+  void _onClientChanged() {
+    super._onClientChanged();
+    _profile = null;
+    load(force: true);
+  }
 
   Future<void> load({bool force = false}) async {
     final uid = _userId;
@@ -385,18 +434,7 @@ class ProfileService extends ChangeNotifier {
       return;
     }
 
-    // 🔥 Если userId изменился — форсируем перезагрузку
-    if (_lastLoadedUserId != uid) {
-      debugPrint('🔄 User changed from $_lastLoadedUserId to $uid - FORCING RELOAD');
-      force = true;
-    }
-
-    if (!force && _profile != null && _lastLoadedUserId == uid && _lastLoaded != null) {
-      if (DateTime.now().difference(_lastLoaded!) < const Duration(minutes: 5)) {
-        debugPrint('📋 Profile: using cached data for $uid');
-        return;
-      }
-    }
+    if (!_shouldReload(force: force)) return;
 
     _loading = true;
     _error = null;
@@ -435,10 +473,9 @@ class ProfileService extends ChangeNotifier {
         );
         debugPrint('✅ Profile loaded: ${_profile!.fullName}');
       }
-      _lastLoaded = DateTime.now();
-      _lastLoadedUserId = uid;
+      _onCacheLoaded();
     } catch (e) {
-      _error = 'Ошибка: $e';
+      _error = ErrorHandler.format(e);
       if (e.toString().contains('JWT expired')) {
         await SupabaseConfig.signOut();
       }
@@ -457,8 +494,9 @@ class ProfileService extends ChangeNotifier {
     try {
       final uid = _userId;
       if (uid.isEmpty) throw Exception('Не авторизован');
-      final username = '${_profile!.firstName} ${_profile!.lastName}'.trim();
-      
+      final username =
+          '${_profile!.firstName} ${_profile!.lastName}'.trim();
+
       await _retryRequest(() => SupabaseConfig.client.from('users').update({
         'username': username.isEmpty ? null : username,
         'height_cm': _profile!.heightCm,
@@ -467,11 +505,11 @@ class ProfileService extends ChangeNotifier {
         'date_of_birth': _profile!.birthDate?.toIso8601String(),
         'updated_at': DateTime.now().toIso8601String(),
       }).eq('id', uid));
-      
+
       _lastLoaded = null;
       return true;
     } catch (e) {
-      _error = 'Ошибка: $e';
+      _error = ErrorHandler.format(e);
       debugPrint('❌ Profile save error: $e');
       return false;
     } finally {
@@ -499,14 +537,14 @@ class ProfileService extends ChangeNotifier {
           .select('id, username, email, code, role_id, trainer_id')
           .eq('code', code.toUpperCase().trim())
           .maybeSingle());
-      
+
       if (response == null) return null;
-      
+
       final roleId = response['role_id'] as String?;
       final isClient = roleId == SupabaseConfig.clientRoleId;
-      
+
       if (!isClient) return null;
-      
+
       return Profile(
         id: response['id'] as String,
         firstName: _parseFirst(response['username']),
@@ -525,7 +563,8 @@ class ProfileService extends ChangeNotifier {
     }
   }
 
-  Future<bool> addClientToTrainer(String trainerId, String clientId) async {
+  Future<bool> addClientToTrainer(
+      String trainerId, String clientId) async {
     try {
       await _retryRequest(() => SupabaseConfig.client
           .from('users')
@@ -564,7 +603,7 @@ class ProfileService extends ChangeNotifier {
           .select('id, username, email, code, role_id, trainer_id')
           .eq('trainer_id', trainerId)
           .order('username', ascending: true));
-      
+
       return response.map((item) => Profile(
         id: item['id'] as String,
         firstName: _parseFirst(item['username']),
@@ -597,7 +636,9 @@ class ProfileService extends ChangeNotifier {
     final n = v.toString().trim();
     return n.isEmpty
         ? ''
-        : (n.split(' ').length > 1 ? n.split(' ').skip(1).join(' ') : '');
+        : (n.split(' ').length > 1
+            ? n.split(' ').skip(1).join(' ')
+            : '');
   }
 
   GoalType _parseGoal(String? v) => v == null
@@ -609,10 +650,11 @@ class ProfileService extends ChangeNotifier {
 }
 
 // ============================================
-//  DiaryService
+// DiaryService
 // ============================================
-class DiaryService extends ChangeNotifier {
-  final ClientsService _clientsService;
+class DiaryService extends ChangeNotifier with ClientAwareService {
+  @override
+  final ClientsService clientsService;
   final _uuid = const Uuid();
   DailyGoals? _goals = const DailyGoals.empty();
 
@@ -636,32 +678,26 @@ class DiaryService extends ChangeNotifier {
   bool _loading = false;
   bool _loadingGoals = false;
   String? _error;
-  String? _lastLoadedUserId;
 
-  DiaryService(this._clientsService) {
-    _clientsService.addListener(_onClientChanged);
+  DiaryService(this.clientsService) {
+    clientsService.addListener(_onClientChanged);
   }
 
   @override
   void dispose() {
-    _clientsService.removeListener(_onClientChanged);
+    clientsService.removeListener(_onClientChanged);
     super.dispose();
   }
 
+  @override
   void _onClientChanged() {
-    final newUserId = _clientsService.selectedUserId;
-    // 🔥 ИСПРАВЛЕНО: Проверяем != без проверки на null
-    if (_lastLoadedUserId != newUserId) {
-      debugPrint('🔄 DiaryService: Client changed ($_lastLoadedUserId → $newUserId), clearing cache');
-      for (var t in MealType.values) {
-        _mealsCacheTime[t] = null;
-      }
-      _lastLoadedUserId = newUserId;
-      _goals = null; // 🔥 Сбрасываем цели тоже
-      notifyListeners();
-      // 🔥 Автоматически перезагружаем данные
-      refresh();
+    super._onClientChanged();
+    for (var t in MealType.values) {
+      _mealsCacheTime[t] = null;
     }
+    _goals = null;
+    notifyListeners();
+    refresh();
   }
 
   DailyGoals? get goals => _goals;
@@ -672,8 +708,6 @@ class DiaryService extends ChangeNotifier {
   bool get loadingGoals => _loadingGoals;
   String? get error => _error;
 
-  String get _userId => _clientsService.selectedUserId;
-
   Future<void> _loadGoalsOnly(DateTime d) async {
     final uid = _userId;
     if (uid.isEmpty) return;
@@ -683,13 +717,13 @@ class DiaryService extends ChangeNotifier {
       final [sum, gol] = await Future.wait([
         _retryRequest(() => SupabaseConfig.client
             .from('daily_summary')
-            .select()
+            .select('protein_actual, fat_actual, carbs_actual, calories_actual')
             .eq('user_id', uid)
             .eq('date', ds)
             .maybeSingle()),
         _retryRequest(() => SupabaseConfig.client
             .from('user_goals')
-            .select()
+            .select('protein_target, fat_target, carbs_target, calories_target')
             .eq('user_id', uid)
             .eq('is_active', true)
             .maybeSingle()),
@@ -765,23 +799,18 @@ class DiaryService extends ChangeNotifier {
         );
       }).whereType<Meal>().toList();
     } catch (e) {
-      debugPrint(' Meals load error ($type): $e');
+      debugPrint('Meals load error ($type): $e');
       if (e.toString().contains('JWT expired')) {
         await SupabaseConfig.signOut();
       }
     }
   }
 
-  Future<void> load(DateTime d, {MealType? loadMealsOfType, bool force = false}) async {
-    final uid = _userId;
-    
-    if (_lastLoadedUserId != uid) {
-      debugPrint('🔄 User changed in DiaryService - FORCING RELOAD');
-      force = true;
-    }
-
+  Future<void> load(DateTime d,
+      {MealType? loadMealsOfType, bool force = false}) async {
     _date = d;
-    if (force) {
+    
+    if (_shouldReload(force: force)) {
       for (var t in MealType.values) {
         _mealsCacheTime[t] = null;
       }
@@ -801,7 +830,8 @@ class DiaryService extends ChangeNotifier {
       notifyListeners();
       try {
         if (force) {
-          await Future.wait(MealType.values.map((t) => _loadMealsOfType(t, d)));
+          await Future.wait(
+              MealType.values.map((t) => _loadMealsOfType(t, d)));
         } else if (loadMealsOfType != null) {
           await _loadMealsOfType(loadMealsOfType, d);
         }
@@ -810,8 +840,6 @@ class DiaryService extends ChangeNotifier {
         notifyListeners();
       }
     }
-    
-    _lastLoadedUserId = uid;
   }
 
   Future<void> refresh() async => await load(_date, force: true);
@@ -822,7 +850,7 @@ class DiaryService extends ChangeNotifier {
 
   Future<List<Product>> getProducts(String query) async {
     try {
-      var q = SupabaseConfig.client.from('products').select();
+      var q = SupabaseConfig.client.from('products').select('id,name,calories,protein,fat,carbs,user_id');
       if (query.isNotEmpty) {
         q = q.ilike('name', '%$query%');
       }
@@ -839,17 +867,19 @@ class DiaryService extends ChangeNotifier {
     }
   }
 
-  Future<Product?> createProduct(String name, double cal, double pro, double fat, double carb) async {
+  Future<Product?> createProduct(
+      String name, double cal, double pro, double fat, double carb) async {
     try {
       final uid = _userId;
-      final res = await _retryRequest(() => SupabaseConfig.client.from('products').insert({
-        'name': name,
-        'calories': cal,
-        'protein': pro,
-        'fat': fat,
-        'carbs': carb,
-        'user_id': uid,
-      }).select().single());
+      final res = await _retryRequest(() =>
+          SupabaseConfig.client.from('products').insert({
+            'name': name,
+            'calories': cal,
+            'protein': pro,
+            'fat': fat,
+            'carbs': carb,
+            'user_id': uid,
+          }).select('id,name,calories,protein,fat,carbs,user_id').single());
       return Product.fromJson(res);
     } catch (e) {
       debugPrint('❌ Create product error: $e');
@@ -882,7 +912,8 @@ class DiaryService extends ChangeNotifier {
 
   Future<bool> deleteProduct(String productId) async {
     try {
-      await _retryRequest(() => SupabaseConfig.client.from('products').delete().eq('id', productId));
+      await _retryRequest(() =>
+          SupabaseConfig.client.from('products').delete().eq('id', productId));
       return true;
     } catch (e) {
       debugPrint('❌ Delete product error: $e');
@@ -894,18 +925,20 @@ class DiaryService extends ChangeNotifier {
     try {
       final uid = _userId;
 
-      var productsQuery = SupabaseConfig.client.from('products').select();
+      var productsQuery = SupabaseConfig.client
+          .from('products')
+          .select('id,name,calories,protein,fat,carbs,user_id');
       if (query.isNotEmpty) {
         productsQuery = productsQuery.ilike('name', '%$query%');
       }
       final productsResponse = await _retryRequest(() => productsQuery
           .or('user_id.is.null,user_id.eq.$uid')
           .limit(50));
-      final products = productsResponse.map((j) => Product.fromJson(j)).toList();
+      final products =
+          productsResponse.map((j) => Product.fromJson(j)).toList();
 
-      var recipesQuery = SupabaseConfig.client
-          .from('recipes')
-          .select('*, recipe_products(amount_grams, product_id, products(*))');
+      var recipesQuery = SupabaseConfig.client.from('recipes').select(
+          'id,name,description,base_weight_grams,total_calories,total_protein,total_fat,total_carbs,created_by,recipe_products(amount_grams,product_id,products(id,name,calories,protein,fat,carbs,user_id))');
       if (query.isNotEmpty) {
         recipesQuery = recipesQuery.ilike('name', '%$query%');
       }
@@ -945,31 +978,31 @@ class DiaryService extends ChangeNotifier {
       if (uid.isEmpty) return null;
 
       double baseWeight = 0;
-      double _totalCal = 0;
-      double _totalPro = 0;
-      double _totalFat = 0;
-      double _totalCarb = 0;
-      
+      double totalCal = 0;
+      double totalPro = 0;
+      double totalFat = 0;
+      double totalCarb = 0;
+
       for (var ing in ingredients) {
         baseWeight += ing.amountGrams;
         double ratio = ing.amountGrams / 100.0;
-        _totalCal += ing.product.calories * ratio;
-        _totalPro += ing.product.protein * ratio;
-        _totalFat += ing.product.fat * ratio;
-        _totalCarb += ing.product.carbs * ratio;
+        totalCal += ing.product.calories * ratio;
+        totalPro += ing.product.protein * ratio;
+        totalFat += ing.product.fat * ratio;
+        totalCarb += ing.product.carbs * ratio;
       }
 
       final recipeRes = await _retryRequest(() =>
           SupabaseConfig.client.from('recipes').insert({
-        'name': name,
-        'description': description,
-        'base_weight_grams': baseWeight,
-        'total_calories': _totalCal,
-        'total_protein': _totalPro,
-        'total_fat': _totalFat,
-        'total_carbs': _totalCarb,
-        'created_by': uid,
-      }).select('id').single());
+            'name': name,
+            'description': description,
+            'base_weight_grams': baseWeight,
+            'total_calories': totalCal,
+            'total_protein': totalPro,
+            'total_fat': totalFat,
+            'total_carbs': totalCarb,
+            'created_by': uid,
+          }).select('id').single());
 
       final recipeId = recipeRes['id'] as String;
 
@@ -980,20 +1013,21 @@ class DiaryService extends ChangeNotifier {
             .select('id')
             .inFilter('id', productIds)
             .or('user_id.is.null,user_id.eq.$uid'));
-        
+
         if (accessible.length != productIds.length) {
           throw Exception('Не все продукты доступны для добавления в рецепт');
         }
-        
-        await _retryRequest(() => SupabaseConfig.client.from('recipe_products').insert(
-          ingredients
-              .map((ing) => {
-                    'recipe_id': recipeId,
-                    'product_id': ing.product.id,
-                    'amount_grams': ing.amountGrams,
-                  })
-              .toList(),
-        ));
+
+        await _retryRequest(() =>
+            SupabaseConfig.client.from('recipe_products').insert(
+              ingredients
+                  .map((ing) => {
+                        'recipe_id': recipeId,
+                        'product_id': ing.product.id,
+                        'amount_grams': ing.amountGrams,
+                      })
+                  .toList(),
+            ));
       }
 
       return Recipe(
@@ -1001,17 +1035,18 @@ class DiaryService extends ChangeNotifier {
         name: name,
         description: description,
         baseWeightGrams: baseWeight,
-        totalCalories: _totalCal,
-        totalProtein: _totalPro,
-        totalFat: _totalFat,
-        totalCarbs: _totalCarb,
+        totalCalories: totalCal,
+        totalProtein: totalPro,
+        totalFat: totalFat,
+        totalCarbs: totalCarb,
         userId: uid,
         ingredients: ingredients,
       );
     } on PostgrestException catch (e) {
       debugPrint('❌ Create recipe PostgrestException: $e');
       if (e.message.contains('row-level security')) {
-        _error = 'Ошибка прав доступа. Проверьте настройки RLS в Supabase для таблицы recipe_products.';
+        _error =
+            'Ошибка прав доступа. Проверьте настройки RLS в Supabase для таблицы recipe_products.';
       } else {
         _error = 'Ошибка базы данных: ${e.message}';
       }
@@ -1019,7 +1054,8 @@ class DiaryService extends ChangeNotifier {
       return null;
     } on SocketException catch (e) {
       debugPrint('❌ Create recipe network error: $e');
-      _error = 'Проблема с соединением. Проверьте интернет и попробуйте снова.';
+      _error =
+          'Проблема с соединением. Проверьте интернет и попробуйте снова.';
       notifyListeners();
       return null;
     } catch (e) {
@@ -1030,6 +1066,93 @@ class DiaryService extends ChangeNotifier {
     }
   }
 
+  Future<bool> _addMealItemCore({
+    required MealType type,
+    required String productName,
+    required int calories,
+    required int protein,
+    required int fat,
+    required int carbs,
+    required double portionGrams,
+    required String dateStr,
+    String? comment,
+    String? productId,
+  }) async {
+    final uid = _userId;
+    if (uid.isEmpty) throw Exception('Не авторизован');
+
+    final ex = await _retryRequest(() => SupabaseConfig.client
+        .from('meals')
+        .select('id')
+        .eq('user_id', uid)
+        .eq('date', dateStr)
+        .eq('meal_type', type.dbValue)
+        .maybeSingle());
+
+    String mealId;
+    if (ex == null) {
+      mealId = (await _retryRequest(() => SupabaseConfig.client
+              .from('meals')
+              .insert({
+                'user_id': uid,
+                'meal_type': type.dbValue,
+                'date': dateStr,
+                'eaten_at': DateTime.now().toIso8601String(),
+                if (comment != null && comment.isNotEmpty) 'comment': comment,
+              })
+              .select('id')
+              .single()))['id'] as String;
+    } else {
+      mealId = ex['id'] as String;
+      if (comment != null) {
+        await SupabaseConfig.client
+            .from('meals')
+            .update({'comment': comment})
+            .eq('id', mealId);
+      }
+    }
+
+    await _retryRequest(() => SupabaseConfig.client.from('meal_items').insert({
+      'meal_id': mealId,
+      'product_id': productId,
+      'product_name': productName,
+      'amount_grams': portionGrams,
+      'calories': calories,
+      'protein': protein,
+      'fat': fat,
+      'carbs': carbs,
+    }));
+
+    _mealsCacheTime[type] = null;
+    final newMeal = Meal(
+      id: _uuid.v4(),
+      name: productName,
+      weight: '${portionGrams.toInt()}г',
+      calories: calories,
+      protein: protein,
+      fats: fat,
+      carbs: carbs,
+      mealType: type,
+      createdAt: DateTime.now(),
+      comment: comment,
+    );
+    if (_meals[type] != null) {
+      _meals[type] = [..._meals[type]!, newMeal];
+    }
+    if (_goals != null) {
+      _goals = _goals!.copyWith(
+        caloriesCurrent: _goals!.caloriesCurrent + calories,
+        proteinCurrent: _goals!.proteinCurrent + protein,
+        fatsCurrent: _goals!.fatsCurrent + fat,
+        carbsCurrent: _goals!.carbsCurrent + carbs,
+      );
+    }
+    notifyListeners();
+
+    await _updateDailySummaryInBackground(uid, dateStr);
+    return true;
+  }
+
   Future<bool> addFoodItemToMeal({
     required MealType type,
     required dynamic item,
@@ -1037,36 +1160,11 @@ class DiaryService extends ChangeNotifier {
     String? comment,
   }) async {
     try {
-      final uid = _userId;
-      if (uid.isEmpty) throw Exception('Не авторизован');
       final ds = _date.toIso8601String().split('T')[0];
-
-      final ex = await _retryRequest(() => SupabaseConfig.client
-          .from('meals')
-          .select('id')
-          .eq('user_id', uid)
-          .eq('date', ds)
-          .eq('meal_type', type.dbValue)
-          .maybeSingle());
-
-      String mealId;
-      if (ex == null) {
-        mealId = (await _retryRequest(() => SupabaseConfig.client.from('meals').insert({
-          'user_id': uid,
-          'meal_type': type.dbValue,
-          'date': ds,
-          'eaten_at': DateTime.now().toIso8601String(),
-          if (comment != null && comment.isNotEmpty) 'comment': comment,
-        }).select('id').single()))['id'] as String;
-      } else {
-        mealId = ex['id'] as String;
-        if (comment != null) {
-          await SupabaseConfig.client.from('meals').update({'comment': comment}).eq('id', mealId);
-        }
-      }
 
       int cal, pro, fat, cb;
       String itemName;
+      String? productId;
 
       if (item is Product) {
         double ratio = portionGrams / 100.0;
@@ -1075,6 +1173,7 @@ class DiaryService extends ChangeNotifier {
         fat = (item.fat * ratio).round();
         cb = (item.carbs * ratio).round();
         itemName = item.name;
+        productId = item.id;
       } else if (item is Recipe) {
         double scale = portionGrams / item.baseWeightGrams;
         cal = (item.totalCalories * scale).round();
@@ -1083,47 +1182,21 @@ class DiaryService extends ChangeNotifier {
         cb = (item.totalCarbs * scale).round();
         itemName = '🍳 ${item.name}';
       } else {
-        throw Exception('Unknown food item type');
+        throw Exception('Unknown food item type: ${item.runtimeType}');
       }
 
-      await _retryRequest(() => SupabaseConfig.client.from('meal_items').insert({
-        'meal_id': mealId,
-        'product_id': item is Product ? item.id : null,
-        'product_name': itemName,
-        'amount_grams': portionGrams,
-        'calories': cal,
-        'protein': pro,
-        'fat': fat,
-        'carbs': cb,
-      }));
-
-      _mealsCacheTime[type] = null;
-      final newMeal = Meal(
-        id: _uuid.v4(),
-        name: itemName,
-        weight: '${portionGrams.toInt()}г',
+      return await _addMealItemCore(
+        type: type,
+        productName: itemName,
         calories: cal,
         protein: pro,
-        fats: fat,
+        fat: fat,
         carbs: cb,
-        mealType: type,
-        createdAt: DateTime.now(),
+        portionGrams: portionGrams,
+        dateStr: ds,
         comment: comment,
+        productId: productId,
       );
-      if (_meals[type] != null) {
-        _meals[type] = [..._meals[type]!, newMeal];
-      }
-      if (_goals != null) {
-        _goals = _goals!.copyWith(
-          caloriesCurrent: _goals!.caloriesCurrent + cal,
-          proteinCurrent: _goals!.proteinCurrent + pro,
-          fatsCurrent: _goals!.fatsCurrent + fat,
-          carbsCurrent: _goals!.carbsCurrent + cb,
-        );
-      }
-      notifyListeners();
-      _updateDailySummaryInBackground(uid, ds);
-      return true;
     } catch (e) {
       debugPrint('❌ Add food item error: $e');
       return false;
@@ -1139,7 +1212,8 @@ class DiaryService extends ChangeNotifier {
       final uid = _userId;
       if (uid.isEmpty) return false;
       final ds = date.toIso8601String().split('T')[0];
-      final trimmed = comment?.trim().isEmpty == true ? null : comment?.trim();
+      final trimmed =
+          comment?.trim().isEmpty == true ? null : comment?.trim();
 
       _typeComments[type] = trimmed;
       if (_meals[type]!.isNotEmpty && trimmed != null) {
@@ -1167,7 +1241,10 @@ class DiaryService extends ChangeNotifier {
           'comment': trimmed,
         });
       } else {
-        await SupabaseConfig.client.from('meals').update({'comment': trimmed}).eq('id', existing['id'] as String);
+        await SupabaseConfig.client
+            .from('meals')
+            .update({'comment': trimmed})
+            .eq('id', existing['id'] as String);
       }
       return true;
     } catch (e) {
@@ -1188,89 +1265,23 @@ class DiaryService extends ChangeNotifier {
     String? comment,
   }) async {
     try {
-      final uid = _userId;
-      if (uid.isEmpty) throw Exception('Не авторизован');
       final ds = _date.toIso8601String().split('T')[0];
-
-      final ex = await _retryRequest(() => SupabaseConfig.client
-          .from('meals')
-          .select('id')
-          .eq('user_id', uid)
-          .eq('date', ds)
-          .eq('meal_type', type.dbValue)
-          .maybeSingle());
-
-      String mealId;
-      if (ex == null) {
-        mealId = (await _retryRequest(() => SupabaseConfig.client.from('meals').insert({
-          'user_id': uid,
-          'meal_type': type.dbValue,
-          'date': ds,
-          'eaten_at': DateTime.now().toIso8601String(),
-          if (comment != null && comment.isNotEmpty) 'comment': comment,
-        }).select('id').single()))['id'] as String;
-      } else {
-        mealId = ex['id'] as String;
-        if (comment != null) {
-          await SupabaseConfig.client.from('meals').update({'comment': comment}).eq('id', mealId);
-        }
-      }
-
-      String finalPid = pid ?? '';
-      if (pid == null) {
-        final productData = await _retryRequest(() =>
-            SupabaseConfig.client.from('products').insert({
-          'name': pname,
-          'calories': cal,
-          'protein': pro,
-          'fat': fat,
-          'carbs': cb,
-          'user_id': uid,
-        }).select('id').single());
-        finalPid = productData['id'] as String;
-      }
-
-      final weightValue = int.parse(w.replaceAll(RegExp(r'\D'), ''));
+      final weightValue =
+          int.parse(w.replaceAll(RegExp(r'\D'), ''));
       if (weightValue <= 0) throw Exception('Вес > 0');
 
-      await _retryRequest(() => SupabaseConfig.client.from('meal_items').insert({
-        'meal_id': mealId,
-        'product_id': finalPid,
-        'product_name': pname,
-        'amount_grams': weightValue,
-        'calories': cal,
-        'protein': pro,
-        'fat': fat,
-        'carbs': cb,
-      }));
-
-      _mealsCacheTime[type] = null;
-      final newMeal = Meal(
-        id: _uuid.v4(),
-        name: pname,
-        weight: w,
+      return await _addMealItemCore(
+        type: type,
+        productName: pname,
         calories: cal,
         protein: pro,
-        fats: fat,
+        fat: fat,
         carbs: cb,
-        mealType: type,
-        createdAt: DateTime.now(),
+        portionGrams: weightValue.toDouble(),
+        dateStr: ds,
         comment: comment,
+        productId: pid,
       );
-      if (_meals[type] != null) {
-        _meals[type] = [..._meals[type]!, newMeal];
-      }
-      if (_goals != null) {
-        _goals = _goals!.copyWith(
-          caloriesCurrent: _goals!.caloriesCurrent + cal,
-          proteinCurrent: _goals!.proteinCurrent + pro,
-          fatsCurrent: _goals!.fatsCurrent + fat,
-          carbsCurrent: _goals!.carbsCurrent + cb,
-        );
-      }
-      notifyListeners();
-      _updateDailySummaryInBackground(uid, ds);
-      return true;
     } catch (e) {
       debugPrint('❌ Add meal error: $e');
       return false;
@@ -1295,8 +1306,15 @@ class DiaryService extends ChangeNotifier {
         totalCarb += _toIntSafe(item['carbs']);
       }
 
-      await SupabaseConfig.client.from('meal_items').delete().eq('meal_id', mealId);
-      await SupabaseConfig.client.from('meals').delete().eq('id', mealId).eq('user_id', uid);
+      await SupabaseConfig.client
+          .from('meal_items')
+          .delete()
+          .eq('meal_id', mealId);
+      await SupabaseConfig.client
+          .from('meals')
+          .delete()
+          .eq('id', mealId)
+          .eq('user_id', uid);
 
       final ds = _date.toIso8601String().split('T')[0];
       await _updateDailySummaryInBackground(uid, ds);
@@ -1321,8 +1339,9 @@ class DiaryService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _updateDailySummaryInBackground(String uid, String dateStr) async {
-    try {
+  Future<void> _updateDailySummaryInBackground(
+      String uid, String dateStr) async {
+    await _retryRequest(() async {
       final meals = await SupabaseConfig.client
           .from('meals')
           .select('meal_items(calories, protein, fat, carbs)')
@@ -1348,52 +1367,42 @@ class DiaryService extends ChangeNotifier {
         'fat_actual': f,
         'carbs_actual': cb,
       }, onConflict: 'user_id,date');
-    } catch (e) {
-      debugPrint('⚠️ Background daily_summary update failed: $e');
-    }
+    }, maxAttempts: 2);
   }
 }
 
 // ============================================
-//  MeasurementsService (ИСПРАВЛЕННЫЙ)
+// MeasurementsService
 // ============================================
-class MeasurementsService extends ChangeNotifier {
-  final ClientsService _clientsService;
+class MeasurementsService extends ChangeNotifier with ClientAwareService {
+  @override
+  final ClientsService clientsService;
   final _uuid = const Uuid();
   List<Measurement> _list = [];
   bool _loading = false;
   String? _error;
-  DateTime? _lastLoaded;
-  String? _lastLoadedUserId;
 
-  MeasurementsService(this._clientsService) {
-    _clientsService.addListener(_onClientChanged);
+  MeasurementsService(this.clientsService) {
+    clientsService.addListener(_onClientChanged);
   }
 
   @override
   void dispose() {
-    _clientsService.removeListener(_onClientChanged);
+    clientsService.removeListener(_onClientChanged);
     super.dispose();
   }
 
+  @override
   void _onClientChanged() {
-    final newUserId = _clientsService.selectedUserId;
-    // 🔥 ИСПРАВЛЕНО: Проверяем != без проверки на null, чтобы срабатывало при первой смене
-    if (_lastLoadedUserId != newUserId) {
-      debugPrint('🔄 MeasurementsService: Client changed ($_lastLoadedUserId → $newUserId), FORCING CLEAR');
-      _lastLoaded = null;
-      _lastLoadedUserId = newUserId; // 🔥 Сразу обновляем, чтобы избежать повторных срабатываний
-      _list.clear();
-      notifyListeners();
-      // 🔥 Автоматически перезагружаем данные для нового клиента
-      load(force: true);
-    }
+    super._onClientChanged();
+    _list.clear();
+    notifyListeners();
+    load(force: true);
   }
 
   List<Measurement> get list => _list;
   bool get loading => _loading;
   String? get error => _error;
-  String get _userId => _clientsService.selectedUserId;
 
   Future<void> load({bool force = false}) async {
     final uid = _userId;
@@ -1402,21 +1411,7 @@ class MeasurementsService extends ChangeNotifier {
       return;
     }
 
-    // 🔥 Если userId изменился — форсируем перезагрузку
-    if (_lastLoadedUserId != uid) {
-      debugPrint('🔄 User changed in MeasurementsService - FORCING RELOAD');
-      force = true;
-    }
-
-    // 🔥 Проверка кэша только если не force и userId не менялся
-    if (!force &&
-        _list.isNotEmpty &&
-        _lastLoadedUserId == uid &&
-        _lastLoaded != null &&
-        DateTime.now().difference(_lastLoaded!) < const Duration(minutes: 5)) {
-      debugPrint('📋 Measurements: using cached data for $uid');
-      return;
-    }
+    if (!_shouldReload(force: force)) return;
 
     _loading = true;
     _error = null;
@@ -1430,11 +1425,10 @@ class MeasurementsService extends ChangeNotifier {
           .order('measured_at', ascending: false)
           .limit(50));
       _list = data.map((j) => Measurement.fromJson(j)).toList();
-      _lastLoaded = DateTime.now();
-      _lastLoadedUserId = uid;
+      _onCacheLoaded();
       debugPrint('✅ Loaded ${_list.length} measurements for $uid');
     } catch (e) {
-      _error = 'Ошибка: $e';
+      _error = ErrorHandler.format(e);
       if (e.toString().contains('JWT expired')) {
         await SupabaseConfig.signOut();
       }
@@ -1464,14 +1458,15 @@ class MeasurementsService extends ChangeNotifier {
         waistCm: wa,
         hipsCm: hi,
       );
-      await _retryRequest(() => SupabaseConfig.client.from('body_measurements').insert(m.toJson()));
+      await _retryRequest(() =>
+          SupabaseConfig.client.from('body_measurements').insert(m.toJson()));
       _list.insert(0, m);
       _list.sort((a, b) => b.measuredAt.compareTo(a.measuredAt));
       _lastLoaded = null;
       notifyListeners();
       return true;
     } catch (e) {
-      _error = 'Ошибка: $e';
+      _error = ErrorHandler.format(e);
       debugPrint('❌ Measurements save error: $e');
       notifyListeners();
       return false;
@@ -1495,12 +1490,12 @@ class MeasurementsService extends ChangeNotifier {
         if (hi != null) 'hips_cm': hi,
       };
       if (data.isEmpty) return true;
-      
+
       await _retryRequest(() => SupabaseConfig.client
           .from('body_measurements')
           .update(data)
           .eq('id', id));
-      
+
       final i = _list.indexWhere((m) => m.id == id);
       if (i != -1) {
         _list[i] = _list[i].copyWith(
@@ -1514,7 +1509,7 @@ class MeasurementsService extends ChangeNotifier {
       }
       return true;
     } catch (e) {
-      _error = 'Ошибка: $e';
+      _error = ErrorHandler.format(e);
       debugPrint('❌ Measurements update error: $e');
       notifyListeners();
       return false;
@@ -1523,13 +1518,14 @@ class MeasurementsService extends ChangeNotifier {
 
   Future<bool> delete(String id) async {
     try {
-      await _retryRequest(() => SupabaseConfig.client.from('body_measurements').delete().eq('id', id));
+      await _retryRequest(() =>
+          SupabaseConfig.client.from('body_measurements').delete().eq('id', id));
       _list.removeWhere((m) => m.id == id);
       _lastLoaded = null;
       notifyListeners();
       return true;
     } catch (e) {
-      _error = 'Ошибка: $e';
+      _error = ErrorHandler.format(e);
       debugPrint('❌ Measurements delete error: $e');
       notifyListeners();
       return false;
@@ -1538,40 +1534,33 @@ class MeasurementsService extends ChangeNotifier {
 }
 
 // ============================================
-//  StatsService (ИСПРАВЛЕННЫЙ)
+// StatsService
 // ============================================
-class StatsService extends ChangeNotifier {
-  final ClientsService _clientsService;
+class StatsService extends ChangeNotifier with ClientAwareService {
+  @override
+  final ClientsService clientsService;
   StatsData? _stats;
   bool _loading = false, _refreshing = false;
   String? _error;
   DateTime _start = DateTime.now().subtract(const Duration(days: 30));
   DateTime _end = DateTime.now();
-  DateTime? _lastLoaded;
-  String? _lastLoadedUserId;
 
-  StatsService(this._clientsService) {
-    _clientsService.addListener(_onClientChanged);
+  StatsService(this.clientsService) {
+    clientsService.addListener(_onClientChanged);
   }
 
   @override
   void dispose() {
-    _clientsService.removeListener(_onClientChanged);
+    clientsService.removeListener(_onClientChanged);
     super.dispose();
   }
 
+  @override
   void _onClientChanged() {
-    final newUserId = _clientsService.selectedUserId;
-    // 🔥 ИСПРАВЛЕНО: Проверяем != без проверки на null, чтобы срабатывало при первой смене
-    if (_lastLoadedUserId != newUserId) {
-      debugPrint('🔄 StatsService: Client changed ($_lastLoadedUserId → $newUserId), FORCING CLEAR');
-      _lastLoaded = null;
-      _lastLoadedUserId = newUserId; // 🔥 Сразу обновляем, чтобы избежать повторных срабатываний
-      _stats = null;
-      notifyListeners();
-      // 🔥 Автоматически перезагружаем данные для нового клиента
-      load(force: true);
-    }
+    super._onClientChanged();
+    _stats = null;
+    notifyListeners();
+    load(force: true);
   }
 
   StatsData? get stats => _stats;
@@ -1580,7 +1569,6 @@ class StatsService extends ChangeNotifier {
   String? get error => _error;
   DateTime get startDate => _start;
   DateTime get endDate => _end;
-  String get _userId => _clientsService.selectedUserId;
 
   Future<void> load({DateTime? start, DateTime? end, bool force = false}) async {
     final uid = _userId;
@@ -1589,21 +1577,7 @@ class StatsService extends ChangeNotifier {
       return;
     }
 
-    // 🔥 Если userId изменился — форсируем перезагрузку
-    if (_lastLoadedUserId != uid) {
-      debugPrint('🔄 User changed in StatsService - FORCING RELOAD');
-      force = true;
-    }
-
-    // 🔥 Проверка кэша только если не force и userId не менялся
-    if (!force &&
-        _stats != null &&
-        _lastLoadedUserId == uid &&
-        _lastLoaded != null &&
-        DateTime.now().difference(_lastLoaded!) < const Duration(minutes: 3)) {
-      debugPrint('📋 Stats: using cached data for $uid');
-      return;
-    }
+    if (!_shouldReload(force: force)) return;
 
     if (start != null) _start = start;
     if (end != null) _end = end;
@@ -1639,15 +1613,27 @@ class StatsService extends ChangeNotifier {
         tc += _toIntSafe(r['carbs_actual']);
         tk += _toIntSafe(r['calories_actual']);
       }
-      final ns = NutritionStats.fromMacros(protein: tp, fats: tf, carbs: tc, calories: tk);
+      final ns =
+          NutritionStats.fromMacros(protein: tp, fats: tf, carbs: tc, calories: tk);
 
-      List<TrendPoint> weightTrend = [], chestTrend = [], waistTrend = [], hipsTrend = [];
+      List<TrendPoint> weightTrend = [],
+          chestTrend = [],
+          waistTrend = [],
+          hipsTrend = [];
       for (final row in measurements) {
         final date = DateTime.parse(row['measured_at'] as String);
-        if (row['weight_kg'] != null) weightTrend.add(TrendPoint(date: date, value: _toDoubleSafe(row['weight_kg'])));
-        if (row['chest_cm'] != null) chestTrend.add(TrendPoint(date: date, value: _toDoubleSafe(row['chest_cm'])));
-        if (row['waist_cm'] != null) waistTrend.add(TrendPoint(date: date, value: _toDoubleSafe(row['waist_cm'])));
-        if (row['hips_cm'] != null) hipsTrend.add(TrendPoint(date: date, value: _toDoubleSafe(row['hips_cm'])));
+        if (row['weight_kg'] != null)
+          weightTrend.add(
+              TrendPoint(date: date, value: _toDoubleSafe(row['weight_kg'])));
+        if (row['chest_cm'] != null)
+          chestTrend.add(
+              TrendPoint(date: date, value: _toDoubleSafe(row['chest_cm'])));
+        if (row['waist_cm'] != null)
+          waistTrend.add(
+              TrendPoint(date: date, value: _toDoubleSafe(row['waist_cm'])));
+        if (row['hips_cm'] != null)
+          hipsTrend.add(
+              TrendPoint(date: date, value: _toDoubleSafe(row['hips_cm'])));
       }
 
       _stats = StatsData(
@@ -1658,11 +1644,10 @@ class StatsService extends ChangeNotifier {
         hipsTrend: hipsTrend,
         streakDays: await _streak(uid, e),
       );
-      _lastLoaded = DateTime.now();
-      _lastLoadedUserId = uid;
+      _onCacheLoaded();
       debugPrint('✅ Stats loaded for $uid');
     } catch (e) {
-      _error = 'Ошибка: $e';
+      _error = ErrorHandler.format(e);
       if (e.toString().contains('JWT expired')) {
         await SupabaseConfig.signOut();
       }
@@ -1697,8 +1682,9 @@ class StatsService extends ChangeNotifier {
           .eq('user_id', uid)
           .eq('is_active', true)
           .maybeSingle());
-      final target =
-          g != null ? _toIntSafe(g['calories_target'], defaultValue: 2500) : 2500;
+      final target = g != null
+          ? _toIntSafe(g['calories_target'], defaultValue: 2500)
+          : 2500;
 
       int streak = 0;
       for (final row in r) {
