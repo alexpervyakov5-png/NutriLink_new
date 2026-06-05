@@ -8,6 +8,7 @@ import '../data/models.dart';
 import '../data/services.dart';
 import '../data/clients_service.dart';
 import 'widgets.dart';
+import 'widgets/custom_tab_icon.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -165,12 +166,6 @@ class _HomeScreenState extends State<HomeScreen> {
     final p = svc.profile!;
     return Scaffold(
       backgroundColor: AppColors.backgroundSecondary,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: const Text('Настройки', style: TextStyle(color: AppColors.textPrimary, fontSize: 20, fontWeight: FontWeight.bold)),
-        centerTitle: true,
-      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -186,7 +181,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 child: Row(
                   children: [
-                    Icon(Icons.visibility, color: AppColors.accent, size: 20),
+                    CustomIcon(
+                      path: '${AppStrings.assetIcons}visibility.png',
+                      width: 20,
+                      height: 20,
+                      color: AppColors.accent,
+                      fallback: const Icon(Icons.visibility, color: AppColors.accent, size: 20),
+                    ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
@@ -199,7 +200,6 @@ class _HomeScreenState extends State<HomeScreen> {
               ),
               const SizedBox(height: 16),
             ],
-            _buildSectionTitle('Личные данные'),
             _Field('Имя', p.firstName, (v) => svc.update((p) => p.copyWith(firstName: v)), enabled: canEdit),
             const SizedBox(height: 16),
             _Field('Фамилия', p.lastName, (v) => svc.update((p) => p.copyWith(lastName: v)), enabled: canEdit),
@@ -218,9 +218,9 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 24),
 
             _buildSectionTitle('Цель'),
-            _Radio('Похудение', Icons.trending_down, GoalType.weightLoss, p.goal, (v) => svc.update((p) => p.copyWith(goal: v)), enabled: canEdit),
-            _Radio('Поддержание', Icons.balance, GoalType.maintenance, p.goal, (v) => svc.update((p) => p.copyWith(goal: v)), enabled: canEdit),
-            _Radio('Массонабор', Icons.fitness_center, GoalType.muscleGain, p.goal, (v) => svc.update((p) => p.copyWith(goal: v)), enabled: canEdit),
+            _Radio('Похудение', 'slim', GoalType.weightLoss, p.goal, (v) => svc.update((p) => p.copyWith(goal: v)), enabled: canEdit),
+            _Radio('Поддержание', 'therapy', GoalType.maintenance, p.goal, (v) => svc.update((p) => p.copyWith(goal: v)), enabled: canEdit),
+            _Radio('Массонабор', 'strong', GoalType.muscleGain, p.goal, (v) => svc.update((p) => p.copyWith(goal: v)), enabled: canEdit),
             const SizedBox(height: 24),
 
             if (canEdit)
@@ -273,9 +273,6 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
-// ==========================================
-//  ВСПОМОГАТЕЛЬНЫЕ ВИДЖЕТЫ
-// ==========================================
 class _Field extends StatelessWidget {
   final String l, v; 
   final ValueChanged<String> c;
@@ -374,7 +371,13 @@ class _DateField extends StatelessWidget {
               v != null ? '${v!.day.toString().padLeft(2, '0')}.${v!.month.toString().padLeft(2, '0')}.${v!.year}' : 'Выберите дату',
               style: TextStyle(color: v != null ? (enabled ? AppColors.textPrimary : AppColors.textHint) : AppColors.textHint)
             )),
-            Icon(Icons.calendar_today, color: enabled ? AppColors.textHint : AppColors.textHint.withOpacity(0.4), size: 20),
+            CustomIcon(
+              path: '${AppStrings.assetIcons}calendar.png',
+              width: 20,
+              height: 20,
+              color: enabled ? AppColors.textHint : AppColors.textHint.withOpacity(0.4),
+              fallback: const Icon(Icons.calendar_today, size: 20),
+            ),
           ]),
         ),
       ),
@@ -420,7 +423,13 @@ class _Dropdown<T> extends StatelessWidget {
               ),
               icon: Padding(
                 padding: const EdgeInsets.only(right: 16),
-                child: Icon(Icons.arrow_drop_down, color: enabled ? AppColors.textHint : AppColors.textHint.withOpacity(0.4), size: 24),
+                child: CustomIcon(
+                  path: '${AppStrings.assetIcons}arrow_drop_down.png',
+                  width: 24,
+                  height: 24,
+                  color: enabled ? AppColors.textHint : AppColors.textHint.withOpacity(0.4),
+                  fallback: const Icon(Icons.arrow_drop_down, size: 24),
+                ),
               ),
               items: items.map((i) => DropdownMenuItem<T>(
                 value: i, 
@@ -447,12 +456,12 @@ class _Dropdown<T> extends StatelessWidget {
 
 class _Radio extends StatelessWidget {
   final String l; 
-  final IconData i; 
+  final String iconKey;
   final dynamic v, g; 
   final ValueChanged<dynamic> c;
   final bool enabled;
   
-  const _Radio(this.l, this.i, this.v, this.g, this.c, {this.enabled = true});
+  const _Radio(this.l, this.iconKey, this.v, this.g, this.c, {this.enabled = true});
   
   @override 
   Widget build(BuildContext context) => Container(
@@ -463,7 +472,13 @@ class _Radio extends StatelessWidget {
     ),
     child: RadioListTile<dynamic>(
       title: Row(children: [
-        Icon(i, color: AppColors.accent, size: 20), 
+        CustomIcon(
+          path: '${AppStrings.assetImages}$iconKey.png',
+          width: 20,
+          height: 20,
+          color: AppColors.accent,
+          fallback: Icon(_getFallbackIcon(iconKey), color: AppColors.accent, size: 20),
+        ),
         const SizedBox(width: 8),
         Text(l, style: TextStyle(color: enabled ? AppColors.textPrimary : AppColors.textHint))
       ]),
@@ -478,4 +493,13 @@ class _Radio extends StatelessWidget {
       contentPadding: const EdgeInsets.symmetric(horizontal: 16),
     ),
   );
+
+  IconData _getFallbackIcon(String key) {
+    switch (key) {
+      case 'slim': return Icons.trending_down;
+      case 'therapy': return Icons.balance;
+      case 'strong': return Icons.fitness_center;
+      default: return Icons.circle;
+    }
+  }
 }

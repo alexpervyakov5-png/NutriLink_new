@@ -367,7 +367,7 @@ void _openFoodSearch({required BuildContext ctx, required MealType type}) {
                                 itemBuilder: (ctx, i) {
                                   final item = items[i];
                                   final isRecipe = item is Recipe;
-                                  final name = isRecipe ? '🍳 ${item.name}' : item.name;
+                                  final name = isRecipe ? ' ${item.name}' : item.name;
                                   final subtitle = isRecipe
                                       ? '${item.totalCalories.toInt()} ккал • ${item.baseWeightGrams.toInt()}г'
                                       : '${item.calories.toInt()} ккал/100г';
@@ -466,7 +466,7 @@ void _openPortionSelector({
                     borderRadius: BorderRadius.circular(8),
                   ),
                   child: Text(
-                    isRecipe ? '🍳 ${item.name}' : item.name,
+                    isRecipe ? ' ${item.name}' : item.name,
                     style: TextStyle(
                         color: AppColors.textPrimary,
                         fontSize: 18,

@@ -24,7 +24,8 @@ class AuthUser extends Equatable {
   final String id, email;
   final String? username;
   final UserRole role;
-  final String? roleId; // 🔥 ID роли из БД
+  final String? roleId;
+  final String? code;  // 🔥 НОВОЕ ПОЛЕ
   final DateTime? createdAt;
 
   const AuthUser({
@@ -33,10 +34,32 @@ class AuthUser extends Equatable {
     this.username,
     this.role = UserRole.client,
     this.roleId,
+    this.code,
     this.createdAt,
   });
 
-  @override List<Object?> get props => [id, email, username, role, roleId, createdAt];
+  AuthUser copyWith({
+    String? id,
+    String? email,
+    String? username,
+    UserRole? role,
+    String? roleId,
+    String? code,
+    DateTime? createdAt,
+  }) {
+    return AuthUser(
+      id: id ?? this.id,
+      email: email ?? this.email,
+      username: username ?? this.username,
+      role: role ?? this.role,
+      roleId: roleId ?? this.roleId,
+      code: code ?? this.code,
+      createdAt: createdAt ?? this.createdAt,
+    );
+  }
+
+  @override
+  List<Object?> get props => [id, email, username, role, roleId, code, createdAt];
 }
 
 class Profile extends Equatable {
@@ -46,6 +69,9 @@ class Profile extends Equatable {
   final int? heightCm;
   final String? gender;
   final GoalType goal;
+  final String? code;  // 🔥 НОВОЕ ПОЛЕ
+  final String? trainerId;
+  final String? roleId;
 
   Profile({
     this.id,
@@ -55,6 +81,9 @@ class Profile extends Equatable {
     this.heightCm,
     this.gender,
     required this.goal,
+    this.code,
+    this.trainerId,
+    this.roleId,
   });
 
   Profile copyWith({
@@ -65,6 +94,9 @@ class Profile extends Equatable {
     int? heightCm,
     String? gender,
     GoalType? goal,
+    String? code,
+    String? trainerId,
+    String? roleId,
   }) =>
       Profile(
         id: id ?? this.id,
@@ -74,11 +106,16 @@ class Profile extends Equatable {
         heightCm: heightCm ?? this.heightCm,
         gender: gender ?? this.gender,
         goal: goal ?? this.goal,
+        code: code ?? this.code,
+        trainerId: trainerId ?? this.trainerId,
+        roleId: roleId ?? this.roleId,
       );
+
+  String get fullName => '$firstName $lastName'.trim();
 
   @override
   List<Object?> get props =>
-      [id, firstName, lastName, birthDate, heightCm, gender, goal];
+      [id, firstName, lastName, birthDate, heightCm, gender, goal, code, trainerId, roleId];
 }
 
 class DailyGoals extends Equatable {

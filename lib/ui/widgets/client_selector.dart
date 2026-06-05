@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../core/config.dart';
-import '../../data/clients_service.dart';
+import '../../../core/config.dart';
+import '../../../data/clients_service.dart';
 
 class ClientSelector extends StatelessWidget {
   const ClientSelector({super.key});

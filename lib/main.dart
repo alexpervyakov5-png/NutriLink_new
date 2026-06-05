@@ -7,6 +7,7 @@ import 'data/clients_service.dart';
 import 'data/services.dart';
 import 'ui/auth_screen.dart';
 import 'ui/main_shell.dart';
+import 'ui/trainer_clients_screen.dart';
 
 final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
@@ -76,28 +77,40 @@ void showGlobalSuccess(String message) {
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SupabaseConfig.initialize();
-  runApp(const NutriLinkApp());
+  
+  // 🔥 Создаем ОДИН экземпляр ClientsService для всего приложения
+  final clientsService = ClientsService();
+  
+  runApp(NutriLinkApp(clientsService: clientsService));
 }
 
 class NutriLinkApp extends StatelessWidget {
-  const NutriLinkApp({super.key});
+  final ClientsService clientsService;
+  
+  const NutriLinkApp({super.key, required this.clientsService});
 
   @override
   Widget build(BuildContext context) => MultiProvider(
         providers: [
-          ChangeNotifierProvider(create: (_) => AuthService()..checkSession()),
-          ChangeNotifierProvider(create: (_) => ClientsService()),
+          // 🔥 Используем .value(), чтобы использовать созданный выше экземпляр
+          ChangeNotifierProvider<ClientsService>.value(value: clientsService),
+          
           ChangeNotifierProvider(
-            create: (context) => ProfileService(context.read<ClientsService>()),
+            create: (_) => AuthService()..checkSession(),
+          ),
+          
+          // 🔥 Передаем clientsService во все сервисы, чтобы они слушали один и тот же инстанс
+          ChangeNotifierProvider(
+            create: (context) => ProfileService(clientsService),
           ),
           ChangeNotifierProvider(
-            create: (context) => DiaryService(context.read<ClientsService>()),
+            create: (context) => DiaryService(clientsService),
           ),
           ChangeNotifierProvider(
-            create: (context) => MeasurementsService(context.read<ClientsService>()),
+            create: (context) => MeasurementsService(clientsService),
           ),
           ChangeNotifierProvider(
-            create: (context) => StatsService(context.read<ClientsService>()),
+            create: (context) => StatsService(clientsService),
           ),
         ],
         child: MaterialApp(
@@ -124,6 +137,9 @@ class NutriLinkApp extends StatelessWidget {
               unselectedItemColor: Colors.grey,
             ),
           ),
+          routes: {
+            '/trainer-clients': (context) => const TrainerClientsScreen(),
+          },
           home: const _Router(),
         ),
       );

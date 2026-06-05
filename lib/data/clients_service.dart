@@ -5,12 +5,14 @@ class ClientInfo {
   final String id;
   final String name;
   final String? email;
+  final String? code;
   final bool isMe;
 
   const ClientInfo({
     required this.id,
     required this.name,
     this.email,
+    this.code,
     this.isMe = false,
   });
 
@@ -19,12 +21,20 @@ class ClientInfo {
 }
 
 class ClientsService extends ChangeNotifier {
+  // 🔥 Диагностика: отслеживаем экземпляр сервиса
+  static int _instanceCounter = 0;
+  final int _instanceId;
+  
   List<ClientInfo> _clients = [];
   ClientInfo? _selectedClient;
   bool _loading = false;
   String? _error;
   bool _isTrainer = false;
   bool _isInitialized = false;
+
+  ClientsService() : _instanceId = ++_instanceCounter {
+    debugPrint('🆔 ClientsService instance #$_instanceId created');
+  }
 
   List<ClientInfo> get clients => _clients;
   ClientInfo? get selectedClient => _selectedClient;
@@ -34,14 +44,15 @@ class ClientsService extends ChangeNotifier {
   bool get hasClients => _clients.length > 1 && _isTrainer;
   bool get isLoaded => _isInitialized;
   
-  /// true, если тренер смотрит данные клиента (не свои)
   bool get isViewingClient => _selectedClient != null && !_selectedClient!.isMe;
-  
-  /// true, если пользователь смотрит свои данные
   bool get isViewingOwnData => _selectedClient?.isMe == true || !_isTrainer;
 
   String get selectedUserId {
-    return _selectedClient?.id ?? SupabaseConfig.currentUserId!;
+    final result = _selectedClient?.id ?? SupabaseConfig.currentUserId!;
+    if (kDebugMode) {
+      debugPrint('🔍 [Instance #$_instanceId] selectedUserId: "${_selectedClient?.name}" → "$result"');
+    }
+    return result;
   }
 
   Future<void> loadClients() async {
@@ -56,7 +67,7 @@ class ClientsService extends ChangeNotifier {
     try {
       final user = await SupabaseConfig.client
           .from('users')
-          .select('role_id, username, email')
+          .select('role_id, username, email, code')
           .eq('id', currentUserId)
           .maybeSingle();
 
@@ -74,6 +85,7 @@ class ClientsService extends ChangeNotifier {
         id: currentUserId,
         name: user['username'] as String? ?? 'Вы',
         email: user['email'] as String?,
+        code: user['code'] as String?,
         isMe: true,
       );
 
@@ -83,12 +95,13 @@ class ClientsService extends ChangeNotifier {
         _isInitialized = true;
         _loading = false;
         notifyListeners();
+        debugPrint('✅ Client loaded: ${trainerInfo.name}');
         return;
       }
 
       final clientsData = await SupabaseConfig.client
           .from('users')
-          .select('id, username, email')
+          .select('id, username, email, code')
           .eq('trainer_id', currentUserId)
           .order('username', ascending: true);
 
@@ -98,13 +111,14 @@ class ClientsService extends ChangeNotifier {
               id: c['id'] as String,
               name: c['username'] as String? ?? 'Без имени',
               email: c['email'] as String?,
+              code: c['code'] as String?,
               isMe: false,
             )),
       ];
 
       _selectedClient = _clients.first;
       _isInitialized = true;
-      debugPrint('✅ ClientsService loaded: ${_clients.length} users');
+      debugPrint('✅ Trainer loaded with ${_clients.length - 1} clients');
     } catch (e, stackTrace) {
       _error = 'Ошибка загрузки клиентов: $e';
       debugPrint('❌ Load clients error: $e');
@@ -117,8 +131,10 @@ class ClientsService extends ChangeNotifier {
 
   void selectClient(ClientInfo client) {
     if (_selectedClient?.id != client.id) {
+      debugPrint('👤 [Instance #$_instanceId] SWITCHING: ${_selectedClient?.name} → ${client.name}');
+      debugPrint('🆔 New client: id=${client.id}, isMe=${client.isMe}');
       _selectedClient = client;
-      debugPrint('👤 Switched to: ${client.name} (${client.id})');
+      debugPrint('🔍 selectedUserId now: "${selectedUserId}"');
       notifyListeners();
     }
   }

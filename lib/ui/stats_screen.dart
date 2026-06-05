@@ -8,6 +8,7 @@ import '../core/config.dart';
 import '../data/models.dart';
 import '../data/services.dart';
 import 'widgets.dart';
+import 'widgets/custom_tab_icon.dart';
 
 class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key});
@@ -29,17 +30,19 @@ class _StatsScreenState extends State<StatsScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (!_isInitialized) {
+    if (!_isInitialized && mounted) {
+      _isInitialized = true;
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
           _loadStats();
-          _isInitialized = true;
         }
       });
     }
   }
 
   Future<void> _loadStats() async {
+    if (!mounted) return;
+    
     try {
       final svc = context.read<StatsService>();
       if (svc.stats == null && !svc.loading) {
@@ -52,6 +55,8 @@ class _StatsScreenState extends State<StatsScreen> {
   }
 
   Future<void> _refreshStats() async {
+    if (!mounted) return;
+    
     try {
       final svc = context.read<StatsService>();
       await svc.refresh();
@@ -162,12 +167,6 @@ class _StatsScreenState extends State<StatsScreen> {
 
     return Scaffold(
       backgroundColor: AppColors.backgroundSecondary,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        title: const Text('Статистика', style: TextStyle(color: AppColors.textPrimary, fontSize: 20, fontWeight: FontWeight.bold)),
-        centerTitle: true,
-      ),
       body: 
         (svc.loading && svc.stats == null)
           ? const Center(child: CircularProgressIndicator())
@@ -244,10 +243,10 @@ class _StatsScreenState extends State<StatsScreen> {
                         children: [
                           const Text('Питание (за период)', style: TextStyle(color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 12),
-                          StatsRow(label: 'Калории', value: '${svc.stats?.nutrition.calories ?? 0}', percent: '', color: AppColors.progressCalories, icon: Icons.local_fire_department),
-                          StatsRow(label: 'Белки', value: '${svc.stats?.nutrition.protein ?? 0}г', percent: '${svc.stats?.nutrition.proteinPercent.toStringAsFixed(0)}%', color: AppColors.progressProtein, icon: Icons.egg),
-                          StatsRow(label: 'Жиры', value: '${svc.stats?.nutrition.fats ?? 0}г', percent: '${svc.stats?.nutrition.fatsPercent.toStringAsFixed(0)}%', color: AppColors.progressFats, icon: Icons.water_drop),
-                          StatsRow(label: 'Углеводы', value: '${svc.stats?.nutrition.carbs ?? 0}г', percent: '${svc.stats?.nutrition.carbsPercent.toStringAsFixed(0)}%', color: AppColors.progressCarbs, icon: Icons.grain),
+                          StatsRow(label: 'Калории', value: '${svc.stats?.nutrition.calories ?? 0}', percent: '', iconPath: '${AppStrings.assetImages}calories.png', color: AppColors.progressCalories),
+                          StatsRow(label: 'Белки', value: '${svc.stats?.nutrition.protein ?? 0}г', percent: '${svc.stats?.nutrition.proteinPercent.toStringAsFixed(0)}%', iconPath: '${AppStrings.assetImages}protein.png', color: AppColors.progressProtein),
+                          StatsRow(label: 'Жиры', value: '${svc.stats?.nutrition.fats ?? 0}г', percent: '${svc.stats?.nutrition.fatsPercent.toStringAsFixed(0)}%', iconPath: '${AppStrings.assetImages}fats.png', color: AppColors.progressFats),
+                          StatsRow(label: 'Углеводы', value: '${svc.stats?.nutrition.carbs ?? 0}г', percent: '${svc.stats?.nutrition.carbsPercent.toStringAsFixed(0)}%', iconPath: '${AppStrings.assetImages}carbs.png', color: AppColors.progressCarbs),
                         ],
                       ),
                     ),
@@ -291,7 +290,6 @@ class _StatsScreenState extends State<StatsScreen> {
         maxY = 100;
       }
 
-      // Определяем шаг для подписей дат на оси X
       final int step;
       if (data.length <= 7) {
         step = 1;
@@ -303,7 +301,6 @@ class _StatsScreenState extends State<StatsScreen> {
         step = 5;
       }
 
-      // Рассчитываем интервал для оси Y
       final double yInterval = _calculateYInterval(minY, maxY);
 
       return LineChart(
@@ -402,4 +399,49 @@ class _StatsScreenState extends State<StatsScreen> {
     if (range <= 200) return 50;
     return 100;
   }
+}
+
+// ==========================================
+// ✅ STATS ROW (Обновлён для поддержки путей к иконкам)
+// ==========================================
+class StatsRow extends StatelessWidget {
+  final String label, value, percent;
+  final String iconPath;
+  final Color color;
+
+  const StatsRow({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.percent,
+    required this.iconPath,
+    required this.color,
+  });
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        child: Row(
+          children: [
+            CustomIcon(
+              path: iconPath,
+              width: 24,
+              height: 24,
+              color: color,
+              fallback: Icon(Icons.circle, color: color, size: 24),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(label, style: TextStyle(color: AppColors.textSecondary)),
+                  Text('$value ($percent)',
+                      style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w500)),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
 }

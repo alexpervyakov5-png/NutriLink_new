@@ -32,18 +32,18 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - icons/nutrilink.png
-    - icons/home.png
-    - icons/book.png
-    - icons/measurements.png
-    - icons/stats.png
-    - icons/
-    - images/           
-    - images/breakfast.png
-    - images/lunch.png
-    - images/dinner.png
-    - images/snack.png
-    - images/protein.png
-    - images/fats.png
-    - images/carbs.png
-    - images/calories.png
+    - assets/icons/nutrilink.png
+    - assets/icons/home.png
+    - assets/icons/book.png
+    - assets/icons/measurements.png
+    - assets/icons/stats.png
+    - assets/icons/
+    - assets/images/           
+    - assets/images/breakfast.png
+    - assets/images/lunch.png
+    - assets/images/dinner.png
+    - assets/images/snack.png
+    - assets/images/protein.png
+    - assets/images/fats.png
+    - assets/images/carbs.png
+    - assets/images/calories.png

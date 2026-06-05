@@ -6,13 +6,13 @@ import 'package:provider/provider.dart';
 import '../core/config.dart';
 import '../data/clients_service.dart';
 import '../data/services.dart';
-import 'auth_screen.dart';
-import 'diary_screen.dart';
 import 'home_screen.dart';
+import 'diary_screen.dart';
 import 'measurements_screen.dart';
-import 'profile_screen.dart';
 import 'stats_screen.dart';
-import '../widgets/client_selector.dart'; // ✅ ИСПРАВЛЕНО: правильный путь
+import 'profile_screen.dart';
+import 'widgets/client_selector.dart';
+import 'widgets/custom_tab_icon.dart';
 
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
@@ -25,41 +25,85 @@ class _MainShellState extends State<MainShell> {
   int _navIndex = 0;
   bool _isSigningOut = false;
   bool _clientsInitialized = false;
+  String? _lastSelectedUserId;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && !_clientsInitialized) {
-        context.read<ClientsService>().loadClients();
-        _clientsInitialized = true;
-        context.read<ClientsService>().addListener(_onClientChanged);
+        _initializeClients();
       }
     });
   }
 
+  Future<void> _initializeClients() async {
+    if (!mounted) return;
+    
+    final clientsService = context.read<ClientsService>();
+    await clientsService.loadClients();
+    _clientsInitialized = true;
+    _lastSelectedUserId = clientsService.selectedUserId;
+    
+    if (mounted) {
+      clientsService.addListener(_onClientChanged);
+      _reloadCurrentScreenData(force: true);
+    }
+  }
+
   @override
   void dispose() {
-    context.read<ClientsService>().removeListener(_onClientChanged);
+    if (_clientsInitialized) {
+      context.read<ClientsService>().removeListener(_onClientChanged);
+    }
     super.dispose();
   }
 
   void _onClientChanged() {
+    if (!mounted) return;
+    
     final clientsService = context.read<ClientsService>();
     if (clientsService.loading) return;
 
+    final newUserId = clientsService.selectedUserId;
+    
+    if (_lastSelectedUserId != newUserId) {
+      debugPrint('🔔 CLIENT CHANGED: $_lastSelectedUserId → $newUserId');
+      _lastSelectedUserId = newUserId;
+      
+      _reloadAllServices(force: true);
+      _reloadCurrentScreenData(force: true);
+    }
+  }
+
+  void _reloadAllServices({bool force = false}) {
+    if (!mounted) return;
+    
+    debugPrint('🔄 Reloading ALL services for user: $_lastSelectedUserId');
+    
+    context.read<ProfileService>().load(force: force);
+    context.read<DiaryService>().refresh();
+    context.read<MeasurementsService>().load(force: force);
+    context.read<StatsService>().load(force: force);
+  }
+
+  void _reloadCurrentScreenData({bool force = false}) {
+    if (!mounted) return;
+    
+    debugPrint('📥 Reloading screen $_navIndex for user: $_lastSelectedUserId');
+    
     switch (_navIndex) {
       case 0:
-        context.read<ProfileService>().load(force: true);
+        context.read<ProfileService>().load(force: force);
         break;
       case 1:
         context.read<DiaryService>().refresh();
         break;
       case 2:
-        context.read<MeasurementsService>().load(force: true);
+        context.read<MeasurementsService>().load(force: force);
         break;
       case 3:
-        context.read<StatsService>().refresh();
+        context.read<StatsService>().load(force: force);
         break;
     }
   }
@@ -67,65 +111,48 @@ class _MainShellState extends State<MainShell> {
   String _formatError(Object? error) {
     if (error == null) return 'Произошла непредвиденная ошибка';
     
+    final errorStr = error.toString();
     if (error is SocketException || 
-        error.toString().contains('SocketException') ||
-        error.toString().contains('Network is unreachable')) {
-      return 'Нет подключения к интернету. Проверьте соединение';
+        errorStr.contains('SocketException') ||
+        errorStr.contains('Network is unreachable') ||
+        errorStr.contains('Connection refused') ||
+        errorStr.contains('Failed host lookup')) {
+      return 'Нет подключения к интернету';
     }
-    if (error.toString().contains('JWT expired') || 
-        error.toString().contains('session')) {
-      return 'Сессия истекла. Пожалуйста, войдите снова';
+    
+    if (errorStr.contains('JWT expired') || errorStr.contains('session')) {
+      return 'Сессия истекла. Войдите снова';
     }
-    if (error.toString().contains('permission') || 
-        error.toString().contains('unauthorized')) {
-      return 'Ошибка доступа. Пожалуйста, войдите снова';
-    }
-    return 'Не удалось выйти. Попробуйте снова';
+    return 'Ошибка: $error';
   }
 
   void _showError(BuildContext ctx, String message) {
     if (!ctx.mounted) return;
-    
     ScaffoldMessenger.of(ctx).showSnackBar(
       SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.error_outline, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Expanded(child: Text(message, style: const TextStyle(color: Colors.white))),
-          ],
-        ),
+        content: Text(message),
         backgroundColor: Colors.red.shade700,
         behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 4),
-        action: SnackBarAction(
-          label: 'OK',
-          textColor: Colors.white,
-          onPressed: () => ScaffoldMessenger.of(ctx).hideCurrentSnackBar(),
-        ),
       ),
     );
   }
 
   Future<void> _signOut(BuildContext ctx) async {
     if (_isSigningOut) return;
-    
     setState(() => _isSigningOut = true);
-    
     try {
-      final authService = Provider.of<AuthService>(ctx, listen: false);
-      await authService.signOut();
+      await context.read<AuthService>().signOut();
       context.read<ClientsService>().clear();
       
       if (!ctx.mounted) return;
-      Navigator.of(ctx).pushNamedAndRemoveUntil('/auth', (route) => false);
+      if (!mounted) return;
+      
+      Navigator.of(ctx).pushNamedAndRemoveUntil('/', (route) => false);
     } catch (e) {
       if (!ctx.mounted) return;
       _showError(ctx, _formatError(e));
     } finally {
-      if (mounted) {
-        setState(() => _isSigningOut = false);
-      }
+      if (mounted) setState(() => _isSigningOut = false);
     }
   }
 
@@ -139,12 +166,12 @@ class _MainShellState extends State<MainShell> {
         title: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Image.asset(
-              '${AppStrings.assetIcons}nutrilink.png',
+            CustomIcon(
+              path: '${AppStrings.assetIcons}nutrilink.png',
               width: 32,
               height: 32,
-              errorBuilder: (_, __, ___) =>
-                  const Icon(Icons.restaurant, color: AppColors.accentLight),
+              color: AppColors.accentLight,
+              fallback: const Icon(Icons.restaurant, color: AppColors.accentLight, size: 32),
             ),
             const SizedBox(width: 8),
             const Text(
@@ -160,8 +187,17 @@ class _MainShellState extends State<MainShell> {
         centerTitle: true,
         actions: [
           IconButton(
-            icon: const Icon(Icons.menu, color: AppColors.textPrimary),
-            onPressed: () => _showMenu(context),
+            icon: CustomIcon(
+              path: '${AppStrings.assetIcons}menu.png',
+              width: 24,
+              height: 24,
+              color: AppColors.textPrimary,
+              fallback: const Icon(Icons.menu, color: AppColors.textPrimary),
+            ),
+            onPressed: () {
+              if (!context.mounted) return;
+              _showMenu(context);
+            },
           ),
         ],
       ),
@@ -193,29 +229,63 @@ class _MainShellState extends State<MainShell> {
         selectedItemColor: AppColors.accentLight,
         unselectedItemColor: Colors.grey,
         onTap: (index) {
+          if (!mounted) return;
           if (index != _navIndex) {
             setState(() => _navIndex = index);
+            _reloadCurrentScreenData(force: true);
           }
         },
-        items: const [
+        items: [
           BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            activeIcon: Icon(Icons.home),
+            icon: CustomTabIcon(
+              iconPath: '${AppStrings.assetIcons}home.png',
+              activeIconPath: '${AppStrings.assetIcons}home_active.png',
+              isActive: _navIndex == 0,
+            ),
+            activeIcon: CustomTabIcon(
+              iconPath: '${AppStrings.assetIcons}home.png',
+              activeIconPath: '${AppStrings.assetIcons}home_active.png',
+              isActive: true,
+            ),
             label: 'Главная',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.book),
-            activeIcon: Icon(Icons.book),
+            icon: CustomTabIcon(
+              iconPath: '${AppStrings.assetIcons}book.png',
+              activeIconPath: '${AppStrings.assetIcons}book_active.png',
+              isActive: _navIndex == 1,
+            ),
+            activeIcon: CustomTabIcon(
+              iconPath: '${AppStrings.assetIcons}book.png',
+              activeIconPath: '${AppStrings.assetIcons}book_active.png',
+              isActive: true,
+            ),
             label: 'Дневник',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.straighten),
-            activeIcon: Icon(Icons.straighten),
+            icon: CustomTabIcon(
+              iconPath: '${AppStrings.assetIcons}measurements.png',
+              activeIconPath: '${AppStrings.assetIcons}measurements_active.png',
+              isActive: _navIndex == 2,
+            ),
+            activeIcon: CustomTabIcon(
+              iconPath: '${AppStrings.assetIcons}measurements.png',
+              activeIconPath: '${AppStrings.assetIcons}measurements_active.png',
+              isActive: true,
+            ),
             label: 'Замеры',
           ),
           BottomNavigationBarItem(
-            icon: Icon(Icons.bar_chart),
-            activeIcon: Icon(Icons.bar_chart),
+            icon: CustomTabIcon(
+              iconPath: '${AppStrings.assetIcons}stats.png',
+              activeIconPath: '${AppStrings.assetIcons}stats_active.png',
+              isActive: _navIndex == 3,
+            ),
+            activeIcon: CustomTabIcon(
+              iconPath: '${AppStrings.assetIcons}stats.png',
+              activeIconPath: '${AppStrings.assetIcons}stats_active.png',
+              isActive: true,
+            ),
             label: 'Статистика',
           ),
         ],
@@ -225,20 +295,17 @@ class _MainShellState extends State<MainShell> {
 
   Widget _buildScreen(int index) {
     switch (index) {
-      case 0:
-        return const HomeScreen(key: ValueKey('home'));
-      case 1:
-        return const DiaryScreen(key: ValueKey('diary'));
-      case 2:
-        return const MeasurementsScreen(key: ValueKey('measurements'));
-      case 3:
-        return const StatsScreen(key: ValueKey('stats'));
-      default:
-        return const HomeScreen(key: ValueKey('home'));
+      case 0: return const HomeScreen(key: ValueKey('home'));
+      case 1: return const DiaryScreen(key: ValueKey('diary'));
+      case 2: return const MeasurementsScreen(key: ValueKey('measurements'));
+      case 3: return const StatsScreen(key: ValueKey('stats'));
+      default: return const HomeScreen(key: ValueKey('home'));
     }
   }
 
   void _showMenu(BuildContext ctx) {
+    if (!ctx.mounted) return;
+    
     showModalBottomSheet(
       context: ctx,
       backgroundColor: AppColors.backgroundSecondary,
@@ -261,30 +328,33 @@ class _MainShellState extends State<MainShell> {
           ),
           const SizedBox(height: 24),
           ListTile(
-            leading: const Icon(Icons.person, color: AppColors.textPrimary),
-            title: const Text('Профиль',
-                style: TextStyle(color: AppColors.textPrimary)),
+            leading: CustomIcon(
+              path: '${AppStrings.assetIcons}person.png',
+              width: 24,
+              height: 24,
+              color: AppColors.textPrimary,
+              fallback: const Icon(Icons.person, color: AppColors.textPrimary),
+            ),
+            title: const Text('Профиль', style: TextStyle(color: AppColors.textPrimary)),
             onTap: () {
               if (!context.mounted) return;
               Navigator.pop(context);
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const ProfileScreen()),
-              );
+              Navigator.push(context, MaterialPageRoute(builder: (_) => const ProfileScreen()));
             },
           ),
           ListTile(
             leading: _isSigningOut 
-                ? const SizedBox(
-                    width: 20, 
-                    height: 20, 
-                    child: CircularProgressIndicator(strokeWidth: 2)
-                  )
-                : const Icon(Icons.logout, color: Colors.red),
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                : CustomIcon(
+                    path: '${AppStrings.assetIcons}logout.png',
+                    width: 24,
+                    height: 24,
+                    color: Colors.red,
+                    fallback: const Icon(Icons.logout, color: Colors.red),
+                  ),
             title: const Text('Выйти', style: TextStyle(color: Colors.red)),
             enabled: !_isSigningOut,
             onTap: () {
-              // ✅ ИСПРАВЛЕНО: без async, чтобы избежать use_build_context_synchronously
               if (!context.mounted) return;
               Navigator.pop(context);
               _signOut(context);
