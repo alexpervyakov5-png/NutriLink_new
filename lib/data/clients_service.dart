@@ -1,5 +1,4 @@
 import 'package:flutter/foundation.dart';
-import 'package:flutter/material.dart';
 import '../core/config.dart';
 import '../core/error_handler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException, AuthException;
@@ -173,7 +172,7 @@ class ClientsService extends ChangeNotifier {
       }
       _selectedClient = client;
       if (kDebugMode) {
-        debugPrint('🔍 selectedUserId now: "${selectedUserId}"');
+        debugPrint('🔍 selectedUserId now: "$selectedUserId"');
       }
       notifyListeners();
     }

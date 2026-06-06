@@ -6,7 +6,6 @@ import '../../core/safe_text_controller.dart';
 import '../../data/diary_service.dart';
 import '../../data/models.dart';
 import 'input_helpers.dart';
-import 'portion_selector.dart';
 
 void showCreateProductDialog({
   required BuildContext ctx,

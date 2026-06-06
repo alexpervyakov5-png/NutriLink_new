@@ -91,14 +91,18 @@ class StatsService extends ChangeNotifier with ClientAwareService {
           hipsTrend = [];
       for (final row in measurements) {
         final date = DateTime.parse(row['measured_at'] as String);
-        if (row['weight_kg'] != null)
+        if (row['weight_kg'] != null) {
           weightTrend.add(TrendPoint(date: date, value: toDoubleSafe(row['weight_kg'])));
-        if (row['chest_cm'] != null)
+        }
+        if (row['chest_cm'] != null) {
           chestTrend.add(TrendPoint(date: date, value: toDoubleSafe(row['chest_cm'])));
-        if (row['waist_cm'] != null)
+        }
+        if (row['waist_cm'] != null) {
           waistTrend.add(TrendPoint(date: date, value: toDoubleSafe(row['waist_cm'])));
-        if (row['hips_cm'] != null)
+        }
+        if (row['hips_cm'] != null) {
           hipsTrend.add(TrendPoint(date: date, value: toDoubleSafe(row['hips_cm'])));
+        }
       }
 
       _stats = StatsData(

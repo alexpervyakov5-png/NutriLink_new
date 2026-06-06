@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:equatable/equatable.dart';
 
 enum UserRole { client, trainer }
@@ -73,7 +72,7 @@ class Profile extends Equatable {
   final String? trainerId;
   final String? roleId;
 
-  Profile({
+  const Profile({
     this.id,
     required this.firstName,
     required this.lastName,

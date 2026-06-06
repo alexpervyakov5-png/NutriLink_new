@@ -6,7 +6,6 @@ import '../core/config.dart';
 import '../core/error_handler.dart';
 import '../core/safe_text_controller.dart';
 import '../data/diary_service.dart';
-import '../data/clients_service.dart';
 import '../data/models.dart';
 import 'widgets.dart';
 
@@ -1534,6 +1533,7 @@ class _PortionSelectorContentState extends State<_PortionSelectorContent> {
       if (!mounted) return;
       
       // 🔥 Закрываем модалку
+      // ignore: use_build_context_synchronously
       Navigator.of(widget.sheetContext).pop();
 
       // 🔥 Показываем уведомление

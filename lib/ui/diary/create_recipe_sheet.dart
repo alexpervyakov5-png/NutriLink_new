@@ -5,7 +5,6 @@ import '../../core/error_handler.dart';
 import '../../core/safe_text_controller.dart';
 import '../../data/diary_service.dart';
 import '../../data/models.dart';
-import 'portion_selector.dart';
 
 void showCreateRecipeSheet({
   required BuildContext ctx,
@@ -154,7 +153,7 @@ void showCreateRecipeSheet({
                         try {
                           final products =
                               await diaryService.getProducts('');
-                          if (!ctx.mounted) return;
+                          if (!context.mounted) return;
 
                           if (products.isEmpty) {
                             ErrorHandler.showGlobal(
@@ -163,7 +162,7 @@ void showCreateRecipeSheet({
                           }
 
                           final chosen = await showDialog<Product>(
-                            context: ctx,
+                            context: context,
                             builder: (_) => SimpleDialog(
                               backgroundColor: AppColors.background,
                               title: Text('Выберите продукт',
@@ -172,7 +171,7 @@ void showCreateRecipeSheet({
                               children: products
                                   .map((p) => SimpleDialogOption(
                                         onPressed: () =>
-                                            Navigator.pop(ctx, p),
+                                            Navigator.pop(context, p),
                                         child: Text(p.name,
                                             style: TextStyle(
                                                 color: AppColors
@@ -181,11 +180,11 @@ void showCreateRecipeSheet({
                                   .toList(),
                             ),
                           );
-                          if (chosen != null && ctx.mounted) {
+                          if (chosen != null && context.mounted) {
                             final gramsCtrl =
                                 SafeTextEditingController();
                             final gramsStr = await showDialog<String>(
-                              context: ctx,
+                              context: context,
                               builder: (_) => AlertDialog(
                                 backgroundColor: AppColors.background,
                                 title: Text('Вес (г)',
@@ -206,7 +205,7 @@ void showCreateRecipeSheet({
                                     onPressed: () {
                                       final text = gramsCtrl.text;
                                       gramsCtrl.dispose();
-                                      Navigator.pop(ctx, text);
+                                      Navigator.pop(context, text);
                                     },
                                     child: const Text('OK'),
                                   ),
@@ -225,7 +224,7 @@ void showCreateRecipeSheet({
                             recalculate();
                           }
                         } catch (e) {
-                          if (!ctx.mounted) return;
+                          if (!context.mounted) return;
                           ErrorHandler.showGlobal(
                               ErrorHandler.format(e, context: 'search'));
                         }
@@ -248,7 +247,7 @@ void showCreateRecipeSheet({
                             SafeTextEditingController(text: '100');
 
                         showDialog(
-                          context: ctx,
+                          context: context,
                           builder: (dCtx) => AlertDialog(
                             backgroundColor: AppColors.background,
                             title: Text('Новый продукт',
@@ -400,7 +399,10 @@ void showCreateRecipeSheet({
                 onPressed: ingredients.isEmpty
                     ? null
                     : () async {
+                        // 🔥 Сохраняем значения ПЕРЕД async
                         final name = nameCtrl.text.trim();
+                        final description = descCtrl.text;
+                        
                         if (name.isEmpty) {
                           ErrorHandler.showGlobal(
                               'Введите название рецепта');
@@ -421,10 +423,12 @@ void showCreateRecipeSheet({
                           final recipe =
                               await diaryService.createRecipe(
                             name: name,
-                            description: descCtrl.text,
+                            description: description,
                             ingredients: ingredients,
                           );
-                          if (!ctx.mounted) return;
+                          
+                          // 🔥 Проверяем mounted перед использованием
+                          if (!context.mounted) return;
 
                           if (recipe != null) {
                             Navigator.pop(context);
@@ -441,7 +445,7 @@ void showCreateRecipeSheet({
                                 'Не удалось создать рецепт. Попробуйте снова');
                           }
                         } catch (e) {
-                          if (!ctx.mounted) return;
+                          if (!context.mounted) return;
                           ErrorHandler.showGlobal(
                               ErrorHandler.format(e, context: 'recipe'));
                         }
@@ -463,6 +467,7 @@ void showCreateRecipeSheet({
       },
     ),
   ).whenComplete(() {
+    // 🔥 Безопасное удаление контроллеров
     nameCtrl.dispose();
     descCtrl.dispose();
   });

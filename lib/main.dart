@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
-import 'data/services.dart';
 import 'data/auth_service.dart';
 import 'data/profile_service.dart';
 import 'data/diary_service.dart';

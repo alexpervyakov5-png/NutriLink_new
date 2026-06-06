@@ -14,38 +14,92 @@ void showFoodSearchSheet({
   required BuildContext ctx,
   required MealType type,
 }) {
-  final searchCtrl = SafeTextEditingController();
   final diaryService = ctx.read<DiaryService>();
 
-  void openPortionSelector(
-      BuildContext ctx, MealType type, dynamic item, DiaryService svc) {
-    showModalBottomSheet(
-      context: ctx,
-      backgroundColor: AppColors.background,
-      isScrollControlled: true,
-      builder: (sheetContext) {
-        return PortionSelectorContent(
-          sheetContext: sheetContext,
-          ctx: ctx,
-          type: type,
-          item: item,
-          diaryService: svc,
-          isRecipe: item is Recipe,
-          baseValue: item is Recipe ? item.baseWeightGrams : 100.0,
-        );
-      },
-    );
-  }
-
+  // 🔥 Создаём StatefulBuilder для управления контроллером
   showModalBottomSheet(
     context: ctx,
     backgroundColor: AppColors.background,
     isScrollControlled: true,
-    builder: (sheetContext) => StatefulBuilder(
+    builder: (sheetContext) => _FoodSearchContent(
+      sheetContext: sheetContext,
+      ctx: ctx,
+      type: type,
+      diaryService: diaryService,
+    ),
+  );
+}
+
+class _FoodSearchContent extends StatefulWidget {
+  final BuildContext sheetContext;
+  final BuildContext ctx;
+  final MealType type;
+  final DiaryService diaryService;
+
+  const _FoodSearchContent({
+    required this.sheetContext,
+    required this.ctx,
+    required this.type,
+    required this.diaryService,
+  });
+
+  @override
+  State<_FoodSearchContent> createState() => _FoodSearchContentState();
+}
+
+class _FoodSearchContentState extends State<_FoodSearchContent> {
+  late final SafeTextEditingController _searchCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _searchCtrl = SafeTextEditingController();
+  }
+
+  @override
+  void dispose() {
+    _searchCtrl.dispose();
+    super.dispose();
+  }
+
+  void _openPortionSelector(dynamic item) {
+    // 🔥 Закрываем модалку поиска
+    if (mounted && widget.sheetContext.mounted) {
+      Navigator.of(widget.sheetContext).pop();
+    }
+    
+    // 🔥 Открываем PortionSelector с задержкой
+    Future.delayed(const Duration(milliseconds: 200), () {
+      if (widget.ctx.mounted) {
+        showModalBottomSheet(
+          context: widget.ctx,
+          backgroundColor: AppColors.background,
+          isScrollControlled: true,
+          builder: (portionContext) {
+            return PortionSelectorContent(
+              sheetContext: portionContext,
+              ctx: widget.ctx,
+              type: widget.type,
+              item: item,
+              diaryService: widget.diaryService,
+              isRecipe: item is Recipe,
+              baseValue: item is Recipe 
+                  ? (item as Recipe).baseWeightGrams 
+                  : 100.0,
+            );
+          },
+        );
+      }
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StatefulBuilder(
       builder: (context, setModalState) {
         return FutureBuilder<List<dynamic>>(
-          future: diaryService
-              .getAllFoodItems(searchCtrl.text)
+          future: widget.diaryService
+              .getAllFoodItems(_searchCtrl.text)
               .catchError((e) {
                 debugPrint('❌ Search error: $e');
                 return <dynamic>[];
@@ -91,7 +145,7 @@ void showFoodSearchSheet({
                           padding:
                               const EdgeInsets.symmetric(horizontal: 12),
                           child: TextField(
-                            controller: searchCtrl,
+                            controller: _searchCtrl,
                             onChanged: (_) => setModalState(() {}),
                             style:
                                 TextStyle(color: AppColors.textPrimary),
@@ -119,22 +173,30 @@ void showFoodSearchSheet({
                               color: Colors.black, size: 24),
                         ),
                         onSelected: (value) {
-                          Navigator.of(sheetContext).pop();
+                          if (widget.sheetContext.mounted) {
+                            Navigator.of(widget.sheetContext).pop();
+                          }
                           Future.microtask(() {
-                            if (ctx.mounted) {
+                            if (widget.ctx.mounted) {
                               if (value == 'product') {
                                 showCreateProductDialog(
-                                  ctx: ctx,
-                                  type: type,
-                                  diaryService: diaryService,
-                                  openPortionSelector: openPortionSelector,
+                                  ctx: widget.ctx,
+                                  type: widget.type,
+                                  diaryService: widget.diaryService,
+                                  openPortionSelector: (c, t, item, svc) {
+                                    Navigator.of(c).pop();
+                                    _openPortionSelector(item);
+                                  },
                                 );
                               } else {
                                 showCreateRecipeSheet(
-                                  ctx: ctx,
-                                  type: type,
-                                  diaryService: diaryService,
-                                  openPortionSelector: openPortionSelector,
+                                  ctx: widget.ctx,
+                                  type: widget.type,
+                                  diaryService: widget.diaryService,
+                                  openPortionSelector: (c, t, item, svc) {
+                                    Navigator.of(c).pop();
+                                    _openPortionSelector(item);
+                                  },
                                 );
                               }
                             }
@@ -187,7 +249,7 @@ void showFoodSearchSheet({
                                         color: AppColors.textHint),
                                     const SizedBox(height: 12),
                                     Text(
-                                      searchCtrl.text.isEmpty
+                                      _searchCtrl.text.isEmpty
                                           ? 'Начните вводить название продукта'
                                           : 'Ничего не найдено',
                                       style: TextStyle(
@@ -219,19 +281,7 @@ void showFoodSearchSheet({
                                         style: TextStyle(
                                             color: AppColors.textSecondary,
                                             fontSize: 12)),
-                                    onTap: () {
-                                      Navigator.of(sheetContext).pop();
-                                      Future.microtask(() {
-                                        if (ctx.mounted) {
-                                          openPortionSelector(
-                                            ctx,
-                                            type,
-                                            item,
-                                            diaryService,
-                                          );
-                                        }
-                                      });
-                                    },
+                                    onTap: () => _openPortionSelector(item),
                                   );
                                 },
                               ),
@@ -242,8 +292,6 @@ void showFoodSearchSheet({
           },
         );
       },
-    ),
-  ).whenComplete(() {
-    searchCtrl.dispose();
-  });
+    );
+  }
 }

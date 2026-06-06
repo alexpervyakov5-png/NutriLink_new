@@ -74,7 +74,7 @@ mixin ClientAwareService on ChangeNotifier {
     if (uid == null || uid.isEmpty) return false;
     
     if (_lastLoadedUserId != uid) {
-      debugPrint('🔄 ${runtimeType}: User changed ($_lastLoadedUserId → $uid) - FORCING RELOAD');
+      debugPrint('🔄 $runtimeType: User changed ($_lastLoadedUserId → $uid) - FORCING RELOAD');
       _lastLoadedUserId = uid;
       return true;
     }
@@ -82,7 +82,7 @@ mixin ClientAwareService on ChangeNotifier {
     if (!force &&
         _lastLoaded != null &&
         DateTime.now().difference(_lastLoaded!) < const Duration(minutes: 5)) {
-      debugPrint('📋 ${runtimeType}: using cached data for $uid');
+      debugPrint('📋 $runtimeType: using cached data for $uid');
       return false;
     }
     
@@ -97,7 +97,7 @@ mixin ClientAwareService on ChangeNotifier {
   void onClientChanged() {
     final newUserId = clientsService.selectedUserId;
     if (_lastLoadedUserId != newUserId) {
-      debugPrint('🔄 ${runtimeType}: Client changed ($_lastLoadedUserId → $newUserId), clearing cache');
+      debugPrint('🔄 $runtimeType: Client changed ($_lastLoadedUserId → $newUserId), clearing cache');
       _lastLoaded = null;
       _lastLoadedUserId = newUserId;
       notifyListeners();
