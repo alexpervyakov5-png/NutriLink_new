@@ -1,4 +1,3 @@
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -6,10 +5,11 @@ import 'package:provider/provider.dart';
 import '../core/config.dart';
 import '../core/error_handler.dart'; // 🔥 ИСПРАВЛЕНО: используем централизованный ErrorHandler
 import '../data/models.dart';
-import '../data/services.dart';
+
 import '../data/clients_service.dart';
-import 'widgets.dart';
+
 import 'widgets/custom_tab_icon.dart';
+import '../data/profile_service.dart';
 
 // ============================================
 // ВСПОМОГАТЕЛЬНЫЕ КОНСТАНТЫ (локальные)

@@ -2,7 +2,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-import 'config.dart';
+import '../main.dart'; // 🔥 Импортируем navigatorKey
 
 /// Централизованная обработка ошибок
 class ErrorHandler {
@@ -130,17 +130,15 @@ class ErrorHandler {
     return 'Произошла непредвиденная ошибка. Попробуйте снова';
   }
 
-  /// 🔥 Получает контекст через глобальный navigatorKey
+  /// 🔥 Получает контекст через navigatorKey из main.dart
   static BuildContext? _getGlobalContext() {
-    // Импортируем navigatorKey из main.dart
-    // Если navigatorKey недоступен, пробуем найти через корневой элемент
     try {
-      final rootElement = WidgetsBinding.instance.rootElement;
-      if (rootElement != null) {
-        return rootElement;
+      final navContext = navigatorKey.currentContext;
+      if (navContext != null) {
+        return navContext;
       }
     } catch (e) {
-      debugPrint('⚠️ Cannot get root element: $e');
+      debugPrint('⚠️ Cannot get navigator context: $e');
     }
     return null;
   }
@@ -149,7 +147,7 @@ class ErrorHandler {
   static void showGlobal(String message) {
     final ctx = _getGlobalContext();
     if (ctx == null) {
-      debugPrint('⚠️ ErrorHandler.showGlobal: No context available for: $message');
+      debugPrint('⚠️ ErrorHandler.showGlobal: No context available');
       return;
     }
 
@@ -188,7 +186,7 @@ class ErrorHandler {
   static void showSuccessGlobal(String message) {
     final ctx = _getGlobalContext();
     if (ctx == null) {
-      debugPrint('⚠️ ErrorHandler.showSuccessGlobal: No context available for: $message');
+      debugPrint('⚠️ ErrorHandler.showSuccessGlobal: No context available');
       return;
     }
 
@@ -223,7 +221,7 @@ class ErrorHandler {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final messenger = ScaffoldMessenger.maybeOf(ctx);
       if (messenger == null) {
-        debugPrint('️ ErrorHandler.show: ScaffoldMessenger not found');
+        debugPrint('⚠️ ErrorHandler.show: ScaffoldMessenger not found');
         return;
       }
       
@@ -256,7 +254,7 @@ class ErrorHandler {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final messenger = ScaffoldMessenger.maybeOf(ctx);
       if (messenger == null) {
-        debugPrint('️ ErrorHandler.showSuccess: ScaffoldMessenger not found');
+        debugPrint('⚠️ ErrorHandler.showSuccess: ScaffoldMessenger not found');
         return;
       }
       

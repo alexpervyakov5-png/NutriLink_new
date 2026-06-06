@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../../../core/config.dart';
-import '../../../data/services.dart';
 import '../../../data/models.dart';
-import '../../../core/error_handler.dart';
+import '../../data/auth_service.dart';
+import '../../data/profile_service.dart';
 
 class AddClientDialog extends StatefulWidget {
   const AddClientDialog({super.key});

@@ -5,10 +5,11 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import '../data/profile_service.dart';
 import '../core/config.dart';
 import '../core/error_handler.dart'; // 🔥 ИСПРАВЛЕНО: добавлен импорт
-import '../data/services.dart';
 import '../data/clients_service.dart';
+import '../data/auth_service.dart';
 import '../data/models.dart';
 import 'widgets/profile_code_card.dart';
 import 'trainer_clients_screen.dart';

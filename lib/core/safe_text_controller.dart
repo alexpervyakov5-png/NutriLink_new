@@ -4,7 +4,7 @@ import 'package:flutter/material.dart';
 class SafeTextEditingController extends TextEditingController {
   bool _isDisposed = false;
 
-  SafeTextEditingController({String? text}) : super(text: text);
+  SafeTextEditingController({String? text}) : super(text: text ?? '');
 
   bool get isDisposed => _isDisposed;
 
@@ -31,38 +31,98 @@ class SafeTextEditingController extends TextEditingController {
   }
 
   @override
-  String get text => _isDisposed ? '' : super.text;
-
-  @override
-  set text(String newText) {
-    if (!_isDisposed) {
-      super.text = newText;
+  String get text {
+    if (_isDisposed) return '';
+    try {
+      return super.text;
+    } catch (_) {
+      return '';
     }
   }
 
   @override
-  TextSelection get selection => _isDisposed 
-      ? const TextSelection.collapsed(offset: 0) 
-      : super.selection;
+  set text(String newText) {
+    if (!_isDisposed) {
+      try {
+        super.text = newText;
+      } catch (_) {
+        // Игнорируем ошибку
+      }
+    }
+  }
+
+  @override
+  TextSelection get selection {
+    if (_isDisposed) {
+      return const TextSelection.collapsed(offset: 0);
+    }
+    try {
+      return super.selection;
+    } catch (_) {
+      return const TextSelection.collapsed(offset: 0);
+    }
+  }
 
   @override
   set selection(TextSelection newSelection) {
     if (!_isDisposed) {
-      super.selection = newSelection;
+      try {
+        super.selection = newSelection;
+      } catch (_) {
+        // Игнорируем ошибку
+      }
     }
   }
 
   @override
   void clear() {
     if (!_isDisposed) {
-      super.clear();
+      try {
+        super.clear();
+      } catch (_) {
+        // Игнорируем ошибку
+      }
     }
   }
 
   @override
   void clearComposing() {
     if (!_isDisposed) {
-      super.clearComposing();
+      try {
+        super.clearComposing();
+      } catch (_) {
+        // Игнорируем ошибку
+      }
+    }
+  }
+
+  /// Безопасная замена текста с регулярным выражением
+  String safeReplaceAll(Pattern from, String replace) {
+    if (_isDisposed) return '';
+    try {
+      return super.text.replaceAll(from, replace);
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Безопасный trim
+  String safeTrim() {
+    if (_isDisposed) return '';
+    try {
+      return super.text.trim();
+    } catch (_) {
+      return '';
+    }
+  }
+
+  /// Безопасная проверка isEmpty
+  bool get safeIsEmpty {
+    if (_isDisposed) return true;
+    try {
+      return super.text.isEmpty;
+    } catch (_) {
+      return true;
     }
   }
 }

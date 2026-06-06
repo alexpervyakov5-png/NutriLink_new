@@ -1,11 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
-
+import 'data/services.dart';
+import 'data/auth_service.dart';
+import 'data/profile_service.dart';
+import 'data/diary_service.dart';
+import 'data/measurements_service.dart';
+import 'data/stats_service.dart';
 import 'core/config.dart';
 import 'core/error_handler.dart'; // 🔥 ИСПРАВЛЕНО: добавлен импорт
 import 'data/clients_service.dart';
-import 'data/services.dart';
 import 'ui/auth_screen.dart';
 import 'ui/main_shell.dart';
 import 'ui/trainer_clients_screen.dart';

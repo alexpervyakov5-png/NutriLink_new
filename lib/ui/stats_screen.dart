@@ -5,8 +5,9 @@ import 'package:fl_chart/fl_chart.dart';
 import '../core/config.dart';
 import '../core/error_handler.dart';
 import '../data/models.dart';
-import '../data/services.dart';
 import 'widgets/custom_tab_icon.dart';
+
+import '../data/stats_service.dart';
 
 // ============================================
 // ВСПОМОГАТЕЛЬНЫЕ КОНСТАНТЫ (локальные)

@@ -5,8 +5,9 @@ import 'package:collection/collection.dart';
 import '../core/config.dart';
 import '../core/error_handler.dart';
 import '../core/safe_text_controller.dart';
+import '../data/diary_service.dart';
+import '../data/clients_service.dart';
 import '../data/models.dart';
-import '../data/services.dart';
 import 'widgets.dart';
 
 // ==========================================
@@ -73,49 +74,59 @@ class _DiaryScreenState extends State<DiaryScreen>
             ? GoalsSection(goals: svc.goals!)
             : const SizedBox.shrink();
 
-    return Container(
-      color: AppColors.background,
-      child: Column(
-        children: [
-          _Header(
-            date: svc.date,
-            onDatePick: (DateTime? d) {
-              if (d != null) {
-                _isInitialized = false;
-                _lastLoadedDate = d;
-                svc.load(d);
-              }
-            },
-          ),
-          goalsWidget,
-          Expanded(
-            child: svc.loading && svc.meals.values.every((m) => m.isEmpty)
-                ? const Center(child: CircularProgressIndicator())
-                : ListView(
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    children: MealType.values.map((t) {
-                      return MealSection(
-                        key: ValueKey(t),
-                        title: t.label,
-                        imagePath: images[t.label]!,
-                        totalCalories:
-                            svc.meals[t]!.fold(0, (s, m) => s + m.calories),
-                        isExpanded: svc.expanded[t] ?? false,
-                        onExpansionChanged: () => svc.toggle(t),
-                        onCommentTap: () => _showComment(ctx: context, type: t),
-                        onAddTap: () => _openFoodSearch(ctx: context, type: t),
-                        items: svc.meals[t]!,
-                      );
-                    }).toList(),
-                  ),
-          ),
-        ],
+    return Scaffold(
+      backgroundColor: AppColors.background,
+      body: RefreshIndicator(
+        onRefresh: () async {
+          await svc.refresh();
+          if (mounted) {
+            ErrorHandler.showSuccessGlobal('Данные обновлены');
+          }
+        },
+        color: AppColors.accent,
+        child: Column(
+          children: [
+            _Header(
+              date: svc.date,
+              onDatePick: (DateTime? d) {
+                if (d != null) {
+                  _isInitialized = false;
+                  _lastLoadedDate = d;
+                  svc.load(d);
+                }
+              },
+            ),
+            goalsWidget,
+            Expanded(
+              child: svc.loading && svc.meals.values.every((m) => m.isEmpty)
+                  ? const Center(child: CircularProgressIndicator())
+                  : ListView(
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      children: MealType.values.map((t) {
+                        return MealSection(
+                          key: ValueKey(t),
+                          title: t.label,
+                          imagePath: images[t.label]!,
+                          totalCalories:
+                              svc.meals[t]!.fold(0, (s, m) => s + m.calories),
+                          isExpanded: svc.expanded[t] ?? false,
+                          onExpansionChanged: () => svc.toggle(t),
+                          onCommentTap: () => _showComment(ctx: context, type: t),
+                          onAddTap: () => _openFoodSearch(ctx: context, type: t),
+                          items: svc.meals[t]!,
+                        );
+                      }).toList(),
+                    ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   // ==========================================
-  // КОММЕНТАРИЙ (ИСПРАВЛЕНО)
+  // КОММЕНТАРИЙ
   // ==========================================
   void _showComment({required BuildContext ctx, required MealType type}) {
     final svc = ctx.read<DiaryService>();
@@ -131,7 +142,6 @@ class _DiaryScreenState extends State<DiaryScreen>
         mealType: type,
         initialComment: currentComment,
         onSave: (String? newComment) async {
-          // 🔥 Закрываем модалку сразу
           if (sheetContext.mounted) {
             Navigator.pop(sheetContext);
           }
@@ -143,14 +153,17 @@ class _DiaryScreenState extends State<DiaryScreen>
               comment: newComment,
             );
             
-            // 🔥 ИСПРАВЛЕНО: используем глобальные методы
-            if (!success) {
-              ErrorHandler.showGlobal('Не удалось сохранить комментарий');
-            }
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (!success) {
+                ErrorHandler.showGlobal('Не удалось сохранить комментарий');
+              }
+            });
           } catch (e) {
-            ErrorHandler.showGlobal(
-              ErrorHandler.format(e, context: 'comment'),
-            );
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              ErrorHandler.showGlobal(
+                ErrorHandler.format(e, context: 'comment'),
+              );
+            });
           }
         },
       ),
@@ -571,20 +584,18 @@ class _DiaryScreenState extends State<DiaryScreen>
                                 item: newP,
                                 diaryService: diaryService,
                               );
-                              ErrorHandler.showSuccess(
-                                  ctx, 'Продукт создан');
+                              ErrorHandler.showSuccessGlobal('Продукт создан');
                             }
                           });
                         } else {
-                          ErrorHandler.show(ctx,
+                          ErrorHandler.showGlobal(
                               'Не удалось создать продукт. Попробуйте снова');
                         }
                       } catch (e) {
                         if (!dialogContext.mounted) {
                           return;
                         }
-                        ErrorHandler.show(
-                            ctx,
+                        ErrorHandler.showGlobal(
                             ErrorHandler.format(e, context: 'product'));
                       }
                     },
@@ -766,7 +777,7 @@ class _DiaryScreenState extends State<DiaryScreen>
                             }
 
                             if (products.isEmpty) {
-                              ErrorHandler.show(ctx,
+                              ErrorHandler.showGlobal(
                                   'Нет доступных продуктов. Создайте продукт сначала');
                               return;
                             }
@@ -827,8 +838,8 @@ class _DiaryScreenState extends State<DiaryScreen>
                               final grams =
                                   double.tryParse(gramsStr ?? '') ?? 100;
                               if (grams <= 0) {
-                                ErrorHandler.show(
-                                    ctx, 'Вес должен быть больше 0');
+                                ErrorHandler.showGlobal(
+                                    'Вес должен быть больше 0');
                                 return;
                               }
                               ingredients.add(RecipeIngredient(
@@ -839,8 +850,7 @@ class _DiaryScreenState extends State<DiaryScreen>
                             if (!ctx.mounted) {
                               return;
                             }
-                            ErrorHandler.show(
-                                ctx,
+                            ErrorHandler.showGlobal(
                                 ErrorHandler.format(e,
                                     context: 'search'));
                           }
@@ -930,7 +940,7 @@ class _DiaryScreenState extends State<DiaryScreen>
                                     final name = tempNameCtrl.text.trim();
                                     if (name.isEmpty ||
                                         name.length < 2) {
-                                      ErrorHandler.show(ctx,
+                                      ErrorHandler.showGlobal(
                                           'Введите название (мин. 2 символа)');
                                       return;
                                     }
@@ -942,7 +952,7 @@ class _DiaryScreenState extends State<DiaryScreen>
                                             100;
 
                                     if (calories < 0 || weight <= 0) {
-                                      ErrorHandler.show(ctx,
+                                      ErrorHandler.showGlobal(
                                           'Проверьте введённые значения');
                                       return;
                                     }
@@ -1024,17 +1034,17 @@ class _DiaryScreenState extends State<DiaryScreen>
                       : () async {
                           final name = nameCtrl.text.trim();
                           if (name.isEmpty) {
-                            ErrorHandler.show(
-                                ctx, 'Введите название рецепта');
+                            ErrorHandler.showGlobal(
+                                'Введите название рецепта');
                             return;
                           }
                           if (name.length < 2) {
-                            ErrorHandler.show(ctx,
+                            ErrorHandler.showGlobal(
                                 'Название должно быть не менее 2 символов');
                             return;
                           }
                           if (ingredients.isEmpty) {
-                            ErrorHandler.show(ctx,
+                            ErrorHandler.showGlobal(
                                 'Добавьте хотя бы один ингредиент');
                             return;
                           }
@@ -1060,20 +1070,19 @@ class _DiaryScreenState extends State<DiaryScreen>
                                     item: recipe,
                                     diaryService: diaryService,
                                   );
-                                  ErrorHandler.showSuccess(
-                                      ctx, 'Рецепт создан');
+                                  ErrorHandler.showSuccessGlobal(
+                                      'Рецепт создан');
                                 }
                               });
                             } else {
-                              ErrorHandler.show(ctx,
+                              ErrorHandler.showGlobal(
                                   'Не удалось создать рецепт. Попробуйте снова');
                             }
                           } catch (e) {
                             if (!ctx.mounted) {
                               return;
                             }
-                            ErrorHandler.show(
-                                ctx,
+                            ErrorHandler.showGlobal(
                                 ErrorHandler.format(e,
                                     context: 'recipe'));
                           }
@@ -1488,21 +1497,30 @@ class _PortionSelectorContentState extends State<_PortionSelectorContent> {
     );
   }
 
+  // ============================================
+  // 🔥 ИСПРАВЛЕНО: finally блок для закрытия модалки
+  // ============================================
   Future<void> _handleSave() async {
+    // 🔥 Сохраняем значения ДО async операции
     final weightStr = _weightCtrl.text.replaceAll(RegExp(r'\D'), '');
     final portionGrams = weightStr.isEmpty
         ? widget.baseValue
         : (double.tryParse(weightStr) ?? widget.baseValue);
 
     if (portionGrams <= 0) {
-      ErrorHandler.show(widget.sheetContext, 'Вес должен быть больше 0');
+      if (mounted) {
+        ErrorHandler.show(widget.sheetContext, 'Вес должен быть больше 0');
+      }
       return;
     }
     if (portionGrams > 10000) {
-      ErrorHandler.show(widget.sheetContext, 'Вес не может быть больше 10 кг');
+      if (mounted) {
+        ErrorHandler.show(widget.sheetContext, 'Вес не может быть больше 10 кг');
+      }
       return;
     }
 
+    if (!mounted) return;
     setState(() => _isLoading = true);
 
     try {
@@ -1512,12 +1530,13 @@ class _PortionSelectorContentState extends State<_PortionSelectorContent> {
         portionGrams: portionGrams,
       );
 
+      // 🔥 Проверяем mounted перед закрытием
+      if (!mounted) return;
+      
       // 🔥 Закрываем модалку
-      if (mounted) {
-        Navigator.of(widget.sheetContext).pop();
-      }
+      Navigator.of(widget.sheetContext).pop();
 
-      // 🔥 ИСПРАВЛЕНО: используем глобальные методы вместо widget.ctx
+      // 🔥 Показываем уведомление
       if (success) {
         ErrorHandler.showSuccessGlobal('Добавлено в дневник');
       } else {
@@ -1526,15 +1545,24 @@ class _PortionSelectorContentState extends State<_PortionSelectorContent> {
     } catch (e) {
       debugPrint('❌ Add food item error: $e');
       
-      // 🔥 Закрываем модалку при ошибке
-      if (mounted) {
-        Navigator.of(widget.sheetContext).pop();
+      // 🔥 Закрываем модалку только если ещё не закрыта
+      if (mounted && widget.sheetContext.mounted) {
+        try {
+          Navigator.of(widget.sheetContext).pop();
+        } catch (_) {
+          // Модалка уже закрыта
+        }
       }
       
-      // 🔥 ИСПРАВЛЕНО: используем глобальные методы
+      // 🔥 Показываем ошибку
       ErrorHandler.showGlobal(
         ErrorHandler.format(e, context: 'meal'),
       );
+    } finally {
+      // 🔥 Сбрасываем isLoading ТОЛЬКО если виджет ещё активен
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 }

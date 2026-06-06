@@ -1,19 +1,23 @@
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-
+import '../data/profile_service.dart';
 import '../core/config.dart';
-import '../core/error_handler.dart'; // 🔥 ИСПРАВЛЕНО: добавлен импорт
 import '../data/clients_service.dart';
-import '../data/services.dart';
+import '../data/stats_service.dart';
+import '../data/measurements_service.dart';
+import '../data/diary_service.dart';
 import 'home_screen.dart';
-import 'diary_screen.dart';
+import 'diary/diary_screen.dart';
 import 'measurements_screen.dart';
 import 'stats_screen.dart';
 import 'profile_screen.dart';
-import 'widgets/client_selector.dart';
 import 'widgets/custom_tab_icon.dart';
+
+import '../core/error_handler.dart'; // 🔥 ИСПРАВЛЕНО: добавлен импорт
+
+import 'widgets/client_selector.dart';
+
 import '../main.dart'; // Для доступа к signOutGlobally и navigatorKey
 
 // ============================================

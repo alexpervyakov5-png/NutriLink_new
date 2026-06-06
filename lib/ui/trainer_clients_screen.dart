@@ -3,9 +3,14 @@ import 'package:provider/provider.dart';
 
 import '../core/config.dart';
 import '../core/error_handler.dart';
-import '../data/services.dart';
-import '../data/models.dart';
+
 import 'widgets/add_client_dialog.dart';
+import '../data/profile_service.dart';
+import '../data/auth_service.dart';
+
+
+import '../data/models.dart';
+
 // 🔥 ИСПРАВЛЕНО: удалён неиспользуемый импорт '../data/clients_service.dart'
 
 class TrainerClientsScreen extends StatefulWidget {

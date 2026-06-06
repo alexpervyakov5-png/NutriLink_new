@@ -25,7 +25,7 @@ class AuthUser extends Equatable {
   final String? username;
   final UserRole role;
   final String? roleId;
-  final String? code;  // 🔥 НОВОЕ ПОЛЕ
+  final String? code;
   final DateTime? createdAt;
 
   const AuthUser({
@@ -69,7 +69,7 @@ class Profile extends Equatable {
   final int? heightCm;
   final String? gender;
   final GoalType goal;
-  final String? code;  // 🔥 НОВОЕ ПОЛЕ
+  final String? code;
   final String? trainerId;
   final String? roleId;
 
@@ -177,12 +177,16 @@ class DailyGoals extends Equatable {
       ];
 }
 
+// ============================================
+// Meal — обновлён: добавлено isRecipe
+// ============================================
 class Meal extends Equatable {
   final String id, name, weight;
   final int calories, protein, fats, carbs;
   final MealType mealType;
   final DateTime createdAt;
   final String? comment;
+  final bool isRecipe; // 🔥 НОВОЕ: для различения продукта и рецепта
 
   const Meal({
     required this.id,
@@ -195,6 +199,7 @@ class Meal extends Equatable {
     required this.mealType,
     required this.createdAt,
     this.comment,
+    this.isRecipe = false,
   });
 
   Meal copyWith({
@@ -208,6 +213,7 @@ class Meal extends Equatable {
     MealType? mealType,
     DateTime? createdAt,
     String? comment,
+    bool? isRecipe,
   }) =>
       Meal(
         id: id ?? this.id,
@@ -220,6 +226,7 @@ class Meal extends Equatable {
         mealType: mealType ?? this.mealType,
         createdAt: createdAt ?? this.createdAt,
         comment: comment ?? this.comment,
+        isRecipe: isRecipe ?? this.isRecipe,
       );
 
   @override
@@ -234,6 +241,7 @@ class Meal extends Equatable {
         mealType,
         createdAt,
         comment,
+        isRecipe,
       ];
 }
 
