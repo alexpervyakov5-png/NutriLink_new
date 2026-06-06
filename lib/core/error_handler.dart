@@ -6,10 +6,7 @@ import 'config.dart';
 
 /// Централизованная обработка ошибок
 class ErrorHandler {
-  // Локальные константы для независимости от AppConstants
   static const int _snackBarDurationSeconds = 4;
-  static const double _streakRatioMin = 0.9;
-  static const double _streakRatioMax = 1.1;
 
   /// Форматирует ошибку в человекочитаемое сообщение
   static String format(Object? error, {String context = ''}) {
@@ -22,7 +19,9 @@ class ErrorHandler {
         errorStr.contains('SocketException') ||
         errorStr.contains('Network is unreachable') ||
         errorStr.contains('Connection refused') ||
-        errorStr.contains('Connection timed out')) {
+        errorStr.contains('Connection timed out') ||
+        errorStr.contains('Connection reset by peer') ||
+        errorStr.contains('Failed host lookup')) {
       return 'Нет подключения к интернету. Проверьте соединение';
     }
 
@@ -62,6 +61,11 @@ class ErrorHandler {
       if (msg.contains('weak password')) {
         return 'Пароль слишком слабый. Минимум 6 символов';
       }
+      if (msg.contains('user already registered') ||
+          msg.contains('already exists') ||
+          msg.contains('duplicate key')) {
+        return 'Пользователь с таким email уже зарегистрирован';
+      }
       return 'Ошибка авторизации: ${error.message}';
     }
 
@@ -83,6 +87,42 @@ class ErrorHandler {
           return 'Не удалось загрузить результаты поиска';
         case 'session':
           return 'Ошибка сессии. Пожалуйста, войдите снова';
+        case 'logout':
+          return 'Ошибка выхода из аккаунта';
+        case 'profile_load':
+          return 'Не удалось загрузить профиль. Попробуйте снова';
+        case 'profile_save':
+          return 'Не удалось сохранить изменения. Попробуйте снова';
+        case 'stats_load':
+          return 'Не удалось загрузить статистику. Попробуйте снова';
+        case 'stats_refresh':
+          return 'Не удалось обновить данные. Попробуйте позже';
+        case 'stats_chart':
+          return 'Не удалось построить график';
+        case 'measurements_load':
+          return 'Не удалось загрузить замеры. Попробуйте снова';
+        case 'measurements_save':
+          return 'Не удалось сохранить замер. Попробуйте снова';
+        case 'measurements_update':
+          return 'Не удалось обновить замер';
+        case 'measurements_delete':
+          return 'Не удалось удалить замер';
+        case 'trainer_clients_load':
+          return 'Не удалось загрузить клиентов. Попробуйте снова';
+        case 'trainer_clients_remove':
+          return 'Не удалось удалить клиента';
+        case 'password_change':
+          return 'Не удалось сменить пароль. Попробуйте снова';
+        case 'password_reset':
+          return 'Не удалось отправить инструкцию. Попробуйте позже';
+        case 'client_search':
+          return 'Не удалось найти клиента';
+        case 'clients':
+          return 'Ошибка загрузки клиентов';
+        case 'login':
+          return 'Не удалось войти. Проверьте email и пароль';
+        case 'signup':
+          return 'Не удалось зарегистрироваться. Попробуйте снова';
       }
     }
 
@@ -90,50 +130,152 @@ class ErrorHandler {
     return 'Произошла непредвиденная ошибка. Попробуйте снова';
   }
 
-  /// Показывает ошибку в SnackBar
-  static void show(BuildContext ctx, String message) {
-    if (!ctx.mounted) return;
-    ScaffoldMessenger.of(ctx).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.error_outline, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Expanded(
-                child: Text(message,
-                    style: const TextStyle(color: Colors.white))),
-          ],
-        ),
-        backgroundColor: Colors.red.shade700,
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: _snackBarDurationSeconds),
-        action: SnackBarAction(
-          label: 'OK',
-          textColor: Colors.white,
-          onPressed: () => ScaffoldMessenger.of(ctx).hideCurrentSnackBar(),
-        ),
-      ),
-    );
+  /// 🔥 Получает контекст через глобальный navigatorKey
+  static BuildContext? _getGlobalContext() {
+    // Импортируем navigatorKey из main.dart
+    // Если navigatorKey недоступен, пробуем найти через корневой элемент
+    try {
+      final rootElement = WidgetsBinding.instance.rootElement;
+      if (rootElement != null) {
+        return rootElement;
+      }
+    } catch (e) {
+      debugPrint('⚠️ Cannot get root element: $e');
+    }
+    return null;
   }
 
-  /// Показывает сообщение об успехе
-  static void showSuccess(BuildContext ctx, String message) {
-    if (!ctx.mounted) return;
-    ScaffoldMessenger.of(ctx).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.check_circle, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Expanded(
-                child: Text(message,
-                    style: const TextStyle(color: Colors.white))),
-          ],
+  /// Показывает ошибку в SnackBar через глобальный контекст
+  static void showGlobal(String message) {
+    final ctx = _getGlobalContext();
+    if (ctx == null) {
+      debugPrint('⚠️ ErrorHandler.showGlobal: No context available for: $message');
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final messenger = ScaffoldMessenger.maybeOf(ctx);
+      if (messenger == null) {
+        debugPrint('⚠️ ErrorHandler.showGlobal: ScaffoldMessenger not found');
+        return;
+      }
+      
+      messenger.showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(message,
+                      style: const TextStyle(color: Colors.white))),
+            ],
+          ),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: _snackBarDurationSeconds),
+          action: SnackBarAction(
+            label: 'OK',
+            textColor: Colors.white,
+            onPressed: () => messenger.hideCurrentSnackBar(),
+          ),
         ),
-        backgroundColor: Colors.green.shade700,
-        behavior: SnackBarBehavior.floating,
-        duration: Duration(seconds: _snackBarDurationSeconds),
-      ),
-    );
+      );
+    });
+  }
+
+  /// Показывает сообщение об успехе через глобальный контекст
+  static void showSuccessGlobal(String message) {
+    final ctx = _getGlobalContext();
+    if (ctx == null) {
+      debugPrint('⚠️ ErrorHandler.showSuccessGlobal: No context available for: $message');
+      return;
+    }
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final messenger = ScaffoldMessenger.maybeOf(ctx);
+      if (messenger == null) {
+        debugPrint('⚠️ ErrorHandler.showSuccessGlobal: ScaffoldMessenger not found');
+        return;
+      }
+      
+      messenger.showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(message,
+                      style: const TextStyle(color: Colors.white))),
+            ],
+          ),
+          backgroundColor: Colors.green.shade700,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: _snackBarDurationSeconds),
+        ),
+      );
+    });
+  }
+
+  /// Показывает ошибку в SnackBar (для использования внутри виджетов)
+  static void show(BuildContext ctx, String message) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final messenger = ScaffoldMessenger.maybeOf(ctx);
+      if (messenger == null) {
+        debugPrint('️ ErrorHandler.show: ScaffoldMessenger not found');
+        return;
+      }
+      
+      messenger.showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(message,
+                      style: const TextStyle(color: Colors.white))),
+            ],
+          ),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: _snackBarDurationSeconds),
+          action: SnackBarAction(
+            label: 'OK',
+            textColor: Colors.white,
+            onPressed: () => messenger.hideCurrentSnackBar(),
+          ),
+        ),
+      );
+    });
+  }
+
+  /// Показывает сообщение об успехе (для использования внутри виджетов)
+  static void showSuccess(BuildContext ctx, String message) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final messenger = ScaffoldMessenger.maybeOf(ctx);
+      if (messenger == null) {
+        debugPrint('️ ErrorHandler.showSuccess: ScaffoldMessenger not found');
+        return;
+      }
+      
+      messenger.showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                  child: Text(message,
+                      style: const TextStyle(color: Colors.white))),
+            ],
+          ),
+          backgroundColor: Colors.green.shade700,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: _snackBarDurationSeconds),
+        ),
+      );
+    });
   }
 }

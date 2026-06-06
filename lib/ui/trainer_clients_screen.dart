@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../core/config.dart';
+import '../core/error_handler.dart';
 import '../data/services.dart';
-import '../data/clients_service.dart';
 import '../data/models.dart';
 import 'widgets/add_client_dialog.dart';
+// 🔥 ИСПРАВЛЕНО: удалён неиспользуемый импорт '../data/clients_service.dart'
 
 class TrainerClientsScreen extends StatefulWidget {
   const TrainerClientsScreen({super.key});
@@ -41,14 +43,15 @@ class _TrainerClientsScreenState extends State<TrainerClientsScreen> {
       if (!mounted) return;
       
       setState(() {
-        _clients = clients;
+        // 🔥 ИСПРАВЛЕНО: фильтруем клиентов с null id для безопасности
+        _clients = clients.where((c) => c.id != null).toList();
         _isLoading = false;
       });
     } catch (e) {
       if (!mounted) return;
       
       setState(() {
-        _error = 'Ошибка загрузки: $e';
+        _error = ErrorHandler.format(e, context: 'trainer_clients_load');
         _isLoading = false;
       });
     }
@@ -66,13 +69,7 @@ class _TrainerClientsScreenState extends State<TrainerClientsScreen> {
     if (result == true && mounted) {
       await _loadClients();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Клиент успешно добавлен'),
-            backgroundColor: Colors.green,
-            behavior: SnackBarBehavior.floating,
-          ),
-        );
+        ErrorHandler.showSuccess(context, 'Клиент успешно добавлен');
       }
     }
   }
@@ -124,25 +121,16 @@ class _TrainerClientsScreenState extends State<TrainerClientsScreen> {
         if (success) {
           await _loadClients();
           if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                content: Text('Клиент удалён'),
-                backgroundColor: AppColors.accent,
-                behavior: SnackBarBehavior.floating,
-              ),
-            );
+            ErrorHandler.showSuccess(context, 'Клиент удалён');
           }
         } else {
           throw Exception('Не удалось удалить');
         }
       } catch (e) {
         if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Ошибка: $e'),
-            backgroundColor: Colors.red,
-            behavior: SnackBarBehavior.floating,
-          ),
+        ErrorHandler.show(
+          context, 
+          ErrorHandler.format(e, context: 'trainer_clients_remove'),
         );
       }
     }
@@ -247,8 +235,9 @@ class _TrainerClientsScreenState extends State<TrainerClientsScreen> {
                           separatorBuilder: (context, index) => const SizedBox(height: 12),
                           itemBuilder: (context, index) {
                             final client = _clients[index];
+                            // 🔥 ИСПРАВЛЕНО: используем ! так как отфильтровали null id при загрузке
                             return Dismissible(
-                              key: Key(client.id ?? index.toString()),
+                              key: ValueKey(client.id!),
                               direction: DismissDirection.endToStart,
                               background: Container(
                                 alignment: Alignment.centerRight,
@@ -263,9 +252,8 @@ class _TrainerClientsScreenState extends State<TrainerClientsScreen> {
                                 ),
                               ),
                               onDismissed: (_) {
-                                if (client.id != null) {
-                                  _removeClient(client.id!, client.fullName);
-                                }
+                                // 🔥 client.id! безопасен, т.к. отфильтрован при загрузке
+                                _removeClient(client.id!, client.fullName);
                               },
                               child: Container(
                                 padding: const EdgeInsets.all(16),

@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 
 import 'core/config.dart';
+import 'core/error_handler.dart'; // 🔥 ИСПРАВЛЕНО: добавлен импорт
 import 'data/clients_service.dart';
 import 'data/services.dart';
 import 'ui/auth_screen.dart';
@@ -41,72 +42,15 @@ Future<void> signOutGlobally() async {
     }
   } catch (e) {
     debugPrint('❌ Global sign out error: $e');
-    showGlobalError('Ошибка выхода: $e');
+    // 🔥 ИСПРАВЛЕНО: используем ErrorHandler вместо showGlobalError
+    final context = navigatorKey.currentContext;
+    if (context != null && context.mounted) {
+      ErrorHandler.show(context, ErrorHandler.format(e, context: 'logout'));
+    }
   }
 }
 
-void showGlobalError(String message) {
-  final context = navigatorKey.currentContext;
-  if (context != null) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.error_outline, color: Colors.white, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    message,
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-              ],
-            ),
-            backgroundColor: Colors.red.shade700,
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 4),
-            action: SnackBarAction(
-              label: 'OK',
-              textColor: Colors.white,
-              onPressed: () => ScaffoldMessenger.of(context).hideCurrentSnackBar(),
-            ),
-          ),
-        );
-      }
-    });
-  }
-}
-
-void showGlobalSuccess(String message) {
-  final context = navigatorKey.currentContext;
-  if (context != null) {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Row(
-              children: [
-                const Icon(Icons.check_circle, color: Colors.white, size: 20),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    message,
-                    style: const TextStyle(color: Colors.white),
-                  ),
-                ),
-              ],
-            ),
-            backgroundColor: Colors.green.shade700,
-            behavior: SnackBarBehavior.floating,
-            duration: const Duration(seconds: 3),
-          ),
-        );
-      }
-    });
-  }
-}
+// 🔥 УДАЛЕНО: showGlobalError и showGlobalSuccess — используем ErrorHandler
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();

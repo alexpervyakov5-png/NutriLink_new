@@ -1,15 +1,48 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
 
 import '../core/config.dart';
+import '../core/error_handler.dart';
 import '../data/models.dart';
 import '../data/services.dart';
-import 'widgets.dart';
 import 'widgets/custom_tab_icon.dart';
 
+// ============================================
+// ВСПОМОГАТЕЛЬНЫЕ КОНСТАНТЫ (локальные)
+// ============================================
+class _StatsConstants {
+  // Настройки графика
+  static const double chartPaddingPercent = 0.15;
+  static const double chartMinPadding = 2.0;
+  static const double chartMaxPadding = 10.0;
+  static const double chartSmallRangeCenter = 3.0;
+  
+  // 🔥 ИСПРАВЛЕНО: убран const, так как double не может быть ключом в const Map
+  static final Map<double, double> yIntervals = {
+    10: 2,
+    20: 5,
+    50: 10,
+    100: 20,
+    200: 50,
+  };
+  static const double yIntervalDefault = 100;
+  
+  // Шаги оси X
+  static const Map<int, int> xSteps = {
+    7: 1,
+    14: 2,
+    30: 3,
+  };
+  static const int xStepDefault = 5;
+  
+  // Метрики
+  static const List<String> metrics = ['weight', 'chest', 'waist', 'hips'];
+}
+
+// ============================================
+// StatsScreen
+// ============================================
 class StatsScreen extends StatefulWidget {
   const StatsScreen({super.key});
   @override
@@ -50,7 +83,7 @@ class _StatsScreenState extends State<StatsScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      _showError(_formatError(e, context: 'load'));
+      ErrorHandler.show(context, ErrorHandler.format(e, context: 'stats_load'));
     }
   }
 
@@ -61,91 +94,12 @@ class _StatsScreenState extends State<StatsScreen> {
       final svc = context.read<StatsService>();
       await svc.refresh();
       if (mounted) {
-        _showSuccess('Данные обновлены');
+        ErrorHandler.showSuccess(context, 'Данные обновлены');
       }
     } catch (e) {
       if (!mounted) return;
-      _showError(_formatError(e, context: 'refresh'));
+      ErrorHandler.show(context, ErrorHandler.format(e, context: 'stats_refresh'));
     }
-  }
-
-  String _formatError(Object? error, {String context = ''}) {
-    if (error == null) return 'Произошла непредвиденная ошибка';
-    
-    if (error is SocketException || 
-        error.toString().contains('SocketException') ||
-        error.toString().contains('Network is unreachable') ||
-        error.toString().contains('Connection refused') ||
-        error.toString().contains('Failed host lookup')) {
-      return 'Нет подключения к интернету. Проверьте соединение';
-    }
-    
-    if (error.toString().contains('PostgrestException') || 
-        error.toString().contains('database')) {
-      if (error.toString().contains('JWT expired')) {
-        return 'Сессия истекла. Пожалуйста, войдите снова';
-      }
-      if (error.toString().contains('row-level security') || 
-          error.toString().contains('permission denied')) {
-        return 'Ошибка доступа. Обратитесь в поддержку';
-      }
-      return 'Ошибка загрузки данных. Попробуйте позже';
-    }
-    
-    if (error is String) return error;
-    
-    if (context.isNotEmpty) {
-      switch (context) {
-        case 'load': return 'Не удалось загрузить статистику. Попробуйте снова';
-        case 'refresh': return 'Не удалось обновить данные. Попробуйте позже';
-        case 'chart': return 'Не удалось построить график';
-      }
-    }
-    
-    return 'Произошла непредвиденная ошибка. Попробуйте снова';
-  }
-
-  void _showError(String message) {
-    if (!mounted) return;
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.error_outline, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Expanded(child: Text(message, style: const TextStyle(color: Colors.white))),
-          ],
-        ),
-        backgroundColor: Colors.red.shade700,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 4),
-        action: SnackBarAction(
-          label: 'OK',
-          textColor: Colors.white,
-          onPressed: () => ScaffoldMessenger.of(context).hideCurrentSnackBar(),
-        ),
-      ),
-    );
-  }
-
-  void _showSuccess(String message) {
-    if (!mounted) return;
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.check_circle, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Expanded(child: Text(message, style: const TextStyle(color: Colors.white))),
-          ],
-        ),
-        backgroundColor: Colors.green.shade700,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 3),
-      ),
-    );
   }
 
   List<TrendPoint> _getTrend(StatsData? data) {
@@ -182,7 +136,7 @@ class _StatsScreenState extends State<StatsScreen> {
                       padding: const EdgeInsets.all(4),
                       decoration: BoxDecoration(color: AppColors.background, borderRadius: BorderRadius.circular(12)),
                       child: Row(
-                        children: ['weight', 'chest', 'waist', 'hips'].map((key) {
+                        children: _StatsConstants.metrics.map((key) {
                           final isSelected = _selectedMetric == key;
                           final meta = _metricConfig[key]!;
                           return Expanded(
@@ -191,7 +145,8 @@ class _StatsScreenState extends State<StatsScreen> {
                               child: Container(
                                 padding: const EdgeInsets.symmetric(vertical: 10),
                                 decoration: BoxDecoration(
-                                  color: isSelected ? (meta['color'] as Color).withOpacity(0.2) : Colors.transparent,
+                                  // 🔥 ИСПРАВЛЕНО: с withOpacity на withValues
+                                  color: isSelected ? (meta['color'] as Color).withValues(alpha: 0.2) : Colors.transparent,
                                   borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: Text(
@@ -217,10 +172,16 @@ class _StatsScreenState extends State<StatsScreen> {
                         children: [
                           Row(
                             children: [
-                              Icon(config['icon'] as IconData, color: config['color'] as Color, size: 24),
+                              Icon(
+                                config['icon'] as IconData? ?? Icons.straighten, 
+                                color: config['color'] as Color? ?? AppColors.accent, 
+                                size: 24
+                              ),
                               const SizedBox(width: 8),
-                              Text('${config['title'] as String} (${config['unit'] as String})',
-                                  style: const TextStyle(color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.bold)),
+                              Text(
+                                '${config['title'] as String} (${config['unit'] as String})',
+                                style: const TextStyle(color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.bold)
+                              ),
                             ],
                           ),
                           const SizedBox(height: 16),
@@ -263,8 +224,8 @@ class _StatsScreenState extends State<StatsScreen> {
     try {
       if (data.isEmpty) return const SizedBox();
       
-      final color = config['color'] as Color;
-      final decimals = config['decimals'] as int;
+      final color = (config['color'] as Color?) ?? AppColors.accent;
+      final decimals = (config['decimals'] as int?) ?? 0;
       final spots = data.asMap().entries.map((e) => FlSpot(e.key.toDouble(), e.value.value)).toList();
       
       double minY, maxY;
@@ -274,14 +235,15 @@ class _StatsScreenState extends State<StatsScreen> {
         final maxVal = values.reduce((a, b) => a > b ? a : b);
         final range = maxVal - minVal;
         
-        final padding = (range * 0.15).clamp(2.0, 10.0);
+        final padding = (range * _StatsConstants.chartPaddingPercent)
+            .clamp(_StatsConstants.chartMinPadding, _StatsConstants.chartMaxPadding);
         minY = minVal - padding;
         maxY = maxVal + padding;
         
         if (range < 3) {
           final center = (minVal + maxVal) / 2;
-          minY = center - 3;
-          maxY = center + 3;
+          minY = center - _StatsConstants.chartSmallRangeCenter;
+          maxY = center + _StatsConstants.chartSmallRangeCenter;
         }
         
         if (minY < 0) minY = 0;
@@ -290,16 +252,9 @@ class _StatsScreenState extends State<StatsScreen> {
         maxY = 100;
       }
 
-      final int step;
-      if (data.length <= 7) {
-        step = 1;
-      } else if (data.length <= 14) {
-        step = 2;
-      } else if (data.length <= 30) {
-        step = 3;
-      } else {
-        step = 5;
-      }
+      final int step = _StatsConstants.xSteps.entries
+          .firstWhere((e) => data.length <= e.key, orElse: () => MapEntry(999, _StatsConstants.xStepDefault))
+          .value;
 
       final double yInterval = _calculateYInterval(minY, maxY);
 
@@ -365,7 +320,8 @@ class _StatsScreenState extends State<StatsScreen> {
               dotData: const FlDotData(show: false),
               belowBarData: BarAreaData(
                 show: true, 
-                color: color.withOpacity(0.15),
+                // 🔥 ИСПРАВЛЕНО: с withOpacity на withValues
+                color: color.withValues(alpha: 0.15),
               ),
               curveSmoothness: 0.3,
             ),
@@ -382,7 +338,7 @@ class _StatsScreenState extends State<StatsScreen> {
       debugPrint('Stack: $stackTrace');
       return Center(
         child: Text(
-          'Не удалось отобразить график',
+          ErrorHandler.format(e, context: 'stats_chart'),
           style: TextStyle(color: AppColors.textHint),
         ),
       );
@@ -392,17 +348,16 @@ class _StatsScreenState extends State<StatsScreen> {
   double _calculateYInterval(double minY, double maxY) {
     final range = maxY - minY;
     if (range <= 0) return 10;
-    if (range <= 10) return 2;
-    if (range <= 20) return 5;
-    if (range <= 50) return 10;
-    if (range <= 100) return 20;
-    if (range <= 200) return 50;
-    return 100;
+    
+    for (final entry in _StatsConstants.yIntervals.entries) {
+      if (range <= entry.key) return entry.value;
+    }
+    return _StatsConstants.yIntervalDefault;
   }
 }
 
 // ==========================================
-// ✅ STATS ROW (Обновлён для поддержки путей к иконкам)
+// ✅ STATS ROW
 // ==========================================
 class StatsRow extends StatelessWidget {
   final String label, value, percent;

@@ -4,12 +4,27 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../core/config.dart';
+import '../core/error_handler.dart'; // 🔥 ИСПРАВЛЕНО: используем централизованный ErrorHandler
 import '../data/models.dart';
 import '../data/services.dart';
 import '../data/clients_service.dart';
 import 'widgets.dart';
 import 'widgets/custom_tab_icon.dart';
 
+// ============================================
+// ВСПОМОГАТЕЛЬНЫЕ КОНСТАНТЫ (локальные)
+// ============================================
+class _HomeConstants {
+  static const int minNameLength = 2;
+  static const int minHeight = 100;
+  static const int maxHeight = 250;
+  static const int heightStep = 5;
+  static const int heightStart = 150;
+}
+
+// ============================================
+// HomeScreen
+// ============================================
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -36,98 +51,27 @@ class _HomeScreenState extends State<HomeScreen> {
       await context.read<ProfileService>().load();
     } catch (e) {
       if (!mounted) return;
-      _showError(_formatError(e, context: 'load'));
+      // 🔥 ИСПРАВЛЕНО: используем централизованный ErrorHandler
+      ErrorHandler.show(context, ErrorHandler.format(e, context: 'profile_load'));
     }
   }
 
-  String _formatError(Object error, {String context = ''}) {
-    if (error is SocketException || 
-        error.toString().contains('SocketException') ||
-        error.toString().contains('Network is unreachable') ||
-        error.toString().contains('Connection refused') ||
-        error.toString().contains('Failed host lookup')) {
-      return 'Нет подключения к интернету. Проверьте соединение';
-    }
-    
-    if (error.toString().contains('PostgrestException') || 
-        error.toString().contains('database')) {
-      if (error.toString().contains('JWT expired')) {
-        return 'Сессия истекла. Пожалуйста, войдите снова';
-      }
-      if (error.toString().contains('row-level security') || 
-          error.toString().contains('permission denied')) {
-        return 'Ошибка доступа. Обратитесь в поддержку';
-      }
-      if (error.toString().contains('duplicate') || 
-          error.toString().contains('unique constraint')) {
-        return 'Данные уже существуют. Проверьте введённые значения';
-      }
-      return 'Ошибка сохранения данных. Попробуйте позже';
-    }
-    
-    if (error is String) return error;
-    
-    if (context.isNotEmpty) {
-      switch (context) {
-        case 'load': return 'Не удалось загрузить профиль. Попробуйте снова';
-        case 'save': return 'Не удалось сохранить изменения. Попробуйте снова';
-        case 'update': return 'Не удалось обновить данные';
-      }
-    }
-    
-    return 'Произошла непредвиденная ошибка. Попробуйте снова';
-  }
-
-  void _showError(String message) {
-    if (!mounted) return;
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.error_outline, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Expanded(child: Text(message, style: const TextStyle(color: Colors.white))),
-          ],
-        ),
-        backgroundColor: Colors.red.shade700,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 4),
-        action: SnackBarAction(
-          label: 'OK',
-          textColor: Colors.white,
-          onPressed: () => ScaffoldMessenger.of(context).hideCurrentSnackBar(),
-        ),
-      ),
-    );
-  }
-
-  void _showSuccess(String message) {
-    if (!mounted) return;
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.check_circle, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Expanded(child: Text(message, style: const TextStyle(color: Colors.white))),
-          ],
-        ),
-        backgroundColor: Colors.green.shade700,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 3),
-      ),
-    );
-  }
+  // 🔥 УДАЛЕНО: _formatError, _showError, _showSuccess
+  // Теперь используем ErrorHandler из core/error_handler.dart
 
   String? _validateProfile(Profile p) {
+    // 🔥 ИСПРАВЛЕНО: используем локальные константы
     if (p.firstName.trim().isEmpty) return 'Введите имя';
-    if (p.firstName.trim().length < 2) return 'Имя должно быть не менее 2 символов';
+    if (p.firstName.trim().length < _HomeConstants.minNameLength) {
+      return 'Имя должно быть не менее ${_HomeConstants.minNameLength} символов';
+    }
     if (p.lastName.trim().isEmpty) return 'Введите фамилию';
-    if (p.lastName.trim().length < 2) return 'Фамилия должна быть не менее 2 символов';
-    if (p.heightCm != null && (p.heightCm! < 100 || p.heightCm! > 250)) {
-      return 'Рост должен быть от 100 до 250 см';
+    if (p.lastName.trim().length < _HomeConstants.minNameLength) {
+      return 'Фамилия должна быть не менее ${_HomeConstants.minNameLength} символов';
+    }
+    if (p.heightCm != null && 
+        (p.heightCm! < _HomeConstants.minHeight || p.heightCm! > _HomeConstants.maxHeight)) {
+      return 'Рост должен быть от ${_HomeConstants.minHeight} до ${_HomeConstants.maxHeight} см';
     }
     return null;
   }
@@ -206,7 +150,10 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 16),
             _DateField('Дата рождения', p.birthDate, (d) => svc.update((p) => p.copyWith(birthDate: d)), enabled: canEdit),
             const SizedBox(height: 16),
-            _Dropdown<int>('Рост', p.heightCm, List.generate(41, (i) => 150 + i * 5), (v) => svc.update((p) => p.copyWith(heightCm: v)), enabled: canEdit),
+            _Dropdown<int>('Рост', p.heightCm, 
+              List.generate(21, (i) => _HomeConstants.heightStart + i * _HomeConstants.heightStep), 
+              (v) => svc.update((p) => p.copyWith(heightCm: v)), 
+              enabled: canEdit),
             const SizedBox(height: 16),
             _Dropdown<String>('Пол', 
               p.gender, 
@@ -218,9 +165,9 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(height: 24),
 
             _buildSectionTitle('Цель'),
-            _Radio('Похудение', 'slim', GoalType.weightLoss, p.goal, (v) => svc.update((p) => p.copyWith(goal: v)), enabled: canEdit),
-            _Radio('Поддержание', 'therapy', GoalType.maintenance, p.goal, (v) => svc.update((p) => p.copyWith(goal: v)), enabled: canEdit),
-            _Radio('Массонабор', 'strong', GoalType.muscleGain, p.goal, (v) => svc.update((p) => p.copyWith(goal: v)), enabled: canEdit),
+            _Radio<GoalType>('Похудение', 'slim', GoalType.weightLoss, p.goal, (v) => svc.update((p) => p.copyWith(goal: v)), enabled: canEdit),
+            _Radio<GoalType>('Поддержание', 'therapy', GoalType.maintenance, p.goal, (v) => svc.update((p) => p.copyWith(goal: v)), enabled: canEdit),
+            _Radio<GoalType>('Массонабор', 'strong', GoalType.muscleGain, p.goal, (v) => svc.update((p) => p.copyWith(goal: v)), enabled: canEdit),
             const SizedBox(height: 24),
 
             if (canEdit)
@@ -230,7 +177,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: svc.saving ? null : () async {
                     final error = _validateProfile(svc.profile!);
                     if (error != null) {
-                      _showError(error);
+                      // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
+                      ErrorHandler.show(context, error);
                       return;
                     }
                     
@@ -239,13 +187,16 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (!mounted) return;
                       
                       if (ok) {
-                        _showSuccess('Изменения сохранены');
+                        // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
+                        ErrorHandler.showSuccess(context, 'Изменения сохранены');
                       } else {
-                        _showError(svc.error != null ? _formatError(svc.error!, context: 'save') : 'Не удалось сохранить изменения');
+                        // 🔥 ИСПРАВЛЕНО: svc.error уже отформатирован в сервисе
+                        ErrorHandler.show(context, svc.error ?? 'Не удалось сохранить изменения');
                       }
                     } catch (e) {
                       if (!mounted) return;
-                      _showError(_formatError(e, context: 'save'));
+                      // 🔥 ИСПРАВЛЕНО: используем централизованный ErrorHandler
+                      ErrorHandler.show(context, ErrorHandler.format(e, context: 'profile_save'));
                     }
                   },
                   style: ElevatedButton.styleFrom(
@@ -273,18 +224,22 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 }
 
+// ============================================
+// ВСПОМОГАТЕЛЬНЫЕ ВИДЖЕТЫ
+// ============================================
+
 class _Field extends StatelessWidget {
-  final String l, v; 
-  final ValueChanged<String> c;
+  final String label, value; 
+  final ValueChanged<String> onChanged;
   final bool enabled;
 
-  const _Field(this.l, this.v, this.c, {this.enabled = true});
+  const _Field(this.label, this.value, this.onChanged, {this.enabled = true});
   
   @override 
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(l, style: const TextStyle(color: AppColors.textSecondary, fontSize: 14)),
+      Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 14)),
       const SizedBox(height: 8),
       Container(
         decoration: BoxDecoration(
@@ -292,7 +247,7 @@ class _Field extends StatelessWidget {
           borderRadius: BorderRadius.circular(8)
         ),
         child: TextFormField(
-          initialValue: v, 
+          initialValue: value, 
           enabled: enabled,
           style: TextStyle(
             color: enabled ? AppColors.textPrimary : AppColors.textHint,
@@ -303,8 +258,8 @@ class _Field extends StatelessWidget {
             border: InputBorder.none, 
             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14)
           ),
-          onChanged: (value) {
-            if (enabled) c(value.trim());
+          onChanged: (val) {
+            if (enabled) onChanged(val.trim());
           },
         ),
       ),
@@ -313,50 +268,41 @@ class _Field extends StatelessWidget {
 }
 
 class _DateField extends StatelessWidget {
-  final String l; 
-  final DateTime? v; 
-  final ValueChanged<DateTime?> c;
+  final String label; 
+  final DateTime? value; 
+  final ValueChanged<DateTime?> onChanged;
   final bool enabled;
   
-  const _DateField(this.l, this.v, this.c, {this.enabled = true});
+  const _DateField(this.label, this.value, this.onChanged, {this.enabled = true});
   
   @override 
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(l, style: const TextStyle(color: AppColors.textSecondary, fontSize: 14)), 
+      Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 14)), 
       const SizedBox(height: 8),
       InkWell(
         onTap: enabled ? () async {
           try {
             final date = await showDatePicker(
               context: context, 
-              initialDate: v ?? DateTime(2000),
+              initialDate: value ?? DateTime(2000),
               firstDate: DateTime(1900), 
               lastDate: DateTime.now()
             );
+            // 🔥 ИСПРАВЛЕНО: проверяем mounted у состояния, а не у параметра context
             if (date != null && context.mounted) {
               if (date.isAfter(DateTime.now())) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Дата не может быть в будущем'),
-                    backgroundColor: Colors.red,
-                    behavior: SnackBarBehavior.floating,
-                  ),
-                );
+                // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
+                ErrorHandler.show(context, 'Дата не может быть в будущем');
                 return;
               }
-              c(date);
+              onChanged(date);
             }
           } catch (e) {
             if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(
-                  content: Text('Не удалось выбрать дату'),
-                  backgroundColor: Colors.red,
-                  behavior: SnackBarBehavior.floating,
-                ),
-              );
+              // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
+              ErrorHandler.show(context, 'Не удалось выбрать дату');
             }
           }
         } : null,
@@ -368,8 +314,14 @@ class _DateField extends StatelessWidget {
           ),
           child: Row(children: [
             Expanded(child: Text(
-              v != null ? '${v!.day.toString().padLeft(2, '0')}.${v!.month.toString().padLeft(2, '0')}.${v!.year}' : 'Выберите дату',
-              style: TextStyle(color: v != null ? (enabled ? AppColors.textPrimary : AppColors.textHint) : AppColors.textHint)
+              value != null 
+                  ? '${value!.day.toString().padLeft(2, '0')}.${value!.month.toString().padLeft(2, '0')}.${value!.year}' 
+                  : 'Выберите дату',
+              style: TextStyle(
+                color: value != null 
+                    ? (enabled ? AppColors.textPrimary : AppColors.textHint) 
+                    : AppColors.textHint
+              )
             )),
             CustomIcon(
               path: '${AppStrings.assetIcons}calendar.png',
@@ -386,20 +338,20 @@ class _DateField extends StatelessWidget {
 }
 
 class _Dropdown<T> extends StatelessWidget {
-  final String l; 
-  final T? v; 
+  final String label; 
+  final T? value; 
   final List<T> items; 
-  final ValueChanged<T?> c;
+  final ValueChanged<T?> onChanged;
   final bool allowNull;
   final bool enabled;
   
-  const _Dropdown(this.l, this.v, this.items, this.c, {this.allowNull = false, this.enabled = true});
+  const _Dropdown(this.label, this.value, this.items, this.onChanged, {this.allowNull = false, this.enabled = true});
   
   @override 
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
-      Text(l, style: const TextStyle(color: AppColors.textSecondary, fontSize: 14)), 
+      Text(label, style: const TextStyle(color: AppColors.textSecondary, fontSize: 14)), 
       const SizedBox(height: 8),
       Container(
         decoration: BoxDecoration(
@@ -411,7 +363,12 @@ class _Dropdown<T> extends StatelessWidget {
             alignedDropdown: true,
             child: DropdownButton<T>(
               isExpanded: true,
-              value: (allowNull || items.contains(v)) ? v : (allowNull ? null : items.first),
+              // 🔥 ИСПРАВЛЕНО: безопасная работа с пустым списком
+              value: items.isEmpty 
+                  ? (allowNull ? null : null) 
+                  : (allowNull || items.contains(value)) 
+                      ? value 
+                      : items.first,
               hint: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
                 child: Text('Выбрать', style: const TextStyle(color: AppColors.textHint)),
@@ -441,9 +398,9 @@ class _Dropdown<T> extends StatelessWidget {
                   ),
                 ),
               )).toList(), 
-              onChanged: enabled ? (value) {
-                if (value != null || allowNull) {
-                  c(value);
+              onChanged: enabled ? (val) {
+                if (val != null || allowNull) {
+                  onChanged(val);
                 }
               } : null,
             ),
@@ -454,14 +411,16 @@ class _Dropdown<T> extends StatelessWidget {
   );
 }
 
-class _Radio extends StatelessWidget {
-  final String l; 
+// 🔥 ИСПРАВЛЕНО: добавлен дженерик <T> вместо dynamic
+class _Radio<T> extends StatelessWidget {
+  final String label; 
   final String iconKey;
-  final dynamic v, g; 
-  final ValueChanged<dynamic> c;
+  final T value;
+  final T groupValue; 
+  final ValueChanged<T> onChanged;
   final bool enabled;
   
-  const _Radio(this.l, this.iconKey, this.v, this.g, this.c, {this.enabled = true});
+  const _Radio(this.label, this.iconKey, this.value, this.groupValue, this.onChanged, {this.enabled = true});
   
   @override 
   Widget build(BuildContext context) => Container(
@@ -470,7 +429,7 @@ class _Radio extends StatelessWidget {
       color: enabled ? AppColors.card : AppColors.card.withOpacity(0.5), 
       borderRadius: BorderRadius.circular(8)
     ),
-    child: RadioListTile<dynamic>(
+    child: RadioListTile<T>(
       title: Row(children: [
         CustomIcon(
           path: '${AppStrings.assetImages}$iconKey.png',
@@ -480,13 +439,13 @@ class _Radio extends StatelessWidget {
           fallback: Icon(_getFallbackIcon(iconKey), color: AppColors.accent, size: 20),
         ),
         const SizedBox(width: 8),
-        Text(l, style: TextStyle(color: enabled ? AppColors.textPrimary : AppColors.textHint))
+        Text(label, style: TextStyle(color: enabled ? AppColors.textPrimary : AppColors.textHint))
       ]),
-      value: v, 
-      groupValue: g, 
-      onChanged: enabled ? (value) {
-        if (value != null) {
-          c(value);
+      value: value, 
+      groupValue: groupValue, 
+      onChanged: enabled ? (val) {
+        if (val != null) {
+          onChanged(val);
         }
       } : null, 
       activeColor: AppColors.accentLight,

@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:collection/collection.dart';
 
 import '../core/config.dart';
 import '../core/error_handler.dart';
+import '../core/safe_text_controller.dart';
 import '../data/models.dart';
 import '../data/services.dart';
 import 'widgets.dart';
@@ -11,7 +13,6 @@ import 'widgets.dart';
 // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ
 // ==========================================
 
-// ✅ ВАРИАНТ 1: _isSameDate принимает DateTime? для второго параметра
 bool _isSameDate(DateTime a, DateTime? b) =>
     b != null && a.year == b.year && a.month == b.month && a.day == b.day;
 
@@ -36,7 +37,6 @@ class _DiaryScreenState extends State<DiaryScreen>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // ✅ Теперь _isSameDate принимает DateTime?, ошибка устранена
     if (!_isInitialized || !_isSameDate(DateTime.now(), _lastLoadedDate)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -69,7 +69,9 @@ class _DiaryScreenState extends State<DiaryScreen>
               ),
             ),
           )
-        : GoalsSection(goals: svc.goals!);
+        : svc.goals != null
+            ? GoalsSection(goals: svc.goals!)
+            : const SizedBox.shrink();
 
     return Container(
       color: AppColors.background,
@@ -78,7 +80,6 @@ class _DiaryScreenState extends State<DiaryScreen>
           _Header(
             date: svc.date,
             onDatePick: (DateTime? d) {
-              // ✅ Проверка на null + фигурные скобки
               if (d != null) {
                 _isInitialized = false;
                 _lastLoadedDate = d;
@@ -94,6 +95,7 @@ class _DiaryScreenState extends State<DiaryScreen>
                     padding: const EdgeInsets.symmetric(vertical: 16),
                     children: MealType.values.map((t) {
                       return MealSection(
+                        key: ValueKey(t),
                         title: t.label,
                         imagePath: images[t.label]!,
                         totalCalories:
@@ -113,10 +115,53 @@ class _DiaryScreenState extends State<DiaryScreen>
   }
 
   // ==========================================
+  // КОММЕНТАРИЙ (ИСПРАВЛЕНО)
+  // ==========================================
+  void _showComment({required BuildContext ctx, required MealType type}) {
+    final svc = ctx.read<DiaryService>();
+    final currentComment = svc.getCommentForType(type) ??
+        svc.meals[type]?.firstOrNull?.comment ??
+        '';
+
+    showModalBottomSheet(
+      context: ctx,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (sheetContext) => _CommentBottomSheet(
+        mealType: type,
+        initialComment: currentComment,
+        onSave: (String? newComment) async {
+          // 🔥 Закрываем модалку сразу
+          if (sheetContext.mounted) {
+            Navigator.pop(sheetContext);
+          }
+
+          try {
+            final success = await svc.updateComment(
+              type: type,
+              date: svc.date,
+              comment: newComment,
+            );
+            
+            // 🔥 ИСПРАВЛЕНО: используем глобальные методы
+            if (!success) {
+              ErrorHandler.showGlobal('Не удалось сохранить комментарий');
+            }
+          } catch (e) {
+            ErrorHandler.showGlobal(
+              ErrorHandler.format(e, context: 'comment'),
+            );
+          }
+        },
+      ),
+    );
+  }
+
+  // ==========================================
   // ПОИСК ЕДЫ (продукты + рецепты)
   // ==========================================
   void _openFoodSearch({required BuildContext ctx, required MealType type}) {
-    final searchCtrl = TextEditingController();
+    final searchCtrl = SafeTextEditingController();
     final diaryService = ctx.read<DiaryService>();
 
     showModalBottomSheet(
@@ -334,218 +379,23 @@ class _DiaryScreenState extends State<DiaryScreen>
   }) {
     final isRecipe = item is Recipe;
     final baseValue = isRecipe ? item.baseWeightGrams : 100.0;
-    final weightCtrl =
-        TextEditingController(text: baseValue.toInt().toString());
-    final unitCtrl = TextEditingController(text: 'г');
 
     showModalBottomSheet(
       context: ctx,
       backgroundColor: AppColors.background,
       isScrollControlled: true,
-      builder: (_) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            final weightStr =
-                weightCtrl.text.replaceAll(RegExp(r'\D'), '');
-            double weight = weightStr.isEmpty
-                ? baseValue
-                : (double.tryParse(weightStr) ?? baseValue);
-
-            double currentCal, currentPro, currentFat, currentCarb;
-
-            if (isRecipe) {
-              final recipe = item;
-              double scale = weight / recipe.baseWeightGrams;
-              currentCal = recipe.totalCalories * scale;
-              currentPro = recipe.totalProtein * scale;
-              currentFat = recipe.totalFat * scale;
-              currentCarb = recipe.totalCarbs * scale;
-            } else {
-              final product = item;
-              double ratio = weight / 100.0;
-              currentCal = product.calories * ratio;
-              currentPro = product.protein * ratio;
-              currentFat = product.fat * ratio;
-              currentCarb = product.carbs * ratio;
-            }
-
-            return Container(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(context).viewInsets.bottom,
-                top: 24,
-                left: 24,
-                right: 24,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  const SizedBox(height: 10),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppColors.backgroundSecondary,
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Text(
-                      isRecipe ? ' ${item.name}' : item.name,
-                      style: TextStyle(
-                          color: AppColors.textPrimary,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: AppColors.backgroundSecondary,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 12),
-                          child: TextField(
-                            controller: weightCtrl,
-                            onChanged: (_) => setState(() {}),
-                            keyboardType:
-                                TextInputType.numberWithOptions(decimal: true),
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 20,
-                            ),
-                            decoration: InputDecoration(
-                              border: InputBorder.none,
-                              errorText: weight <= 0
-                                  ? 'Введите вес больше 0'
-                                  : null,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Container(
-                          decoration: BoxDecoration(
-                            color: AppColors.backgroundSecondary,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 12),
-                          child: TextField(
-                            controller: unitCtrl,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              color: AppColors.textPrimary,
-                              fontSize: 20,
-                            ),
-                            decoration:
-                                InputDecoration(border: InputBorder.none),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 20),
-                  ElevatedButton(
-                    onPressed: () async {
-                      final weightStr =
-                          weightCtrl.text.replaceAll(RegExp(r'\D'), '');
-                      final portionGrams = weightStr.isEmpty
-                          ? baseValue
-                          : (double.tryParse(weightStr) ?? baseValue);
-
-                      if (portionGrams <= 0) {
-                        ErrorHandler.show(ctx, 'Вес должен быть больше 0');
-                        return;
-                      }
-                      if (portionGrams > 10000) {
-                        ErrorHandler.show(
-                            ctx, 'Вес не может быть больше 10 кг');
-                        return;
-                      }
-
-                      try {
-                        final success =
-                            await diaryService.addFoodItemToMeal(
-                          type: type,
-                          item: item,
-                          portionGrams: portionGrams,
-                        );
-
-                        if (!ctx.mounted) {
-                          return;
-                        }
-
-                        if (success) {
-                          ErrorHandler.showSuccess(
-                              ctx, 'Добавлено в дневник');
-                          Navigator.pop(context);
-                        } else {
-                          ErrorHandler.show(
-                              ctx, 'Не удалось добавить. Попробуйте снова');
-                        }
-                      } catch (e) {
-                        if (!ctx.mounted) {
-                          return;
-                        }
-                        ErrorHandler.show(
-                            ctx, ErrorHandler.format(e, context: 'meal'));
-                      }
-                    },
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.accent,
-                      foregroundColor: Colors.black,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12)),
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
-                    child: Text('Сохранить',
-                        style: TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold)),
-                  ),
-                  const SizedBox(height: 20),
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppColors.backgroundSecondary,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      children: [
-                        Row(children: [
-                          Expanded(
-                              child: _NutrientCard(
-                                  'Калории', currentCal.toInt())),
-                          const SizedBox(width: 8),
-                          Expanded(
-                              child: _NutrientCard('Жиры', currentFat))
-                        ]),
-                        const SizedBox(height: 8),
-                        Row(children: [
-                          Expanded(
-                              child: _NutrientCard(
-                                  'Углеводы', currentCarb)),
-                          const SizedBox(width: 8),
-                          Expanded(
-                              child: _NutrientCard('Белки', currentPro))
-                        ]),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-            );
-          },
+      builder: (sheetContext) {
+        return _PortionSelectorContent(
+          sheetContext: sheetContext,
+          ctx: ctx,
+          type: type,
+          item: item,
+          diaryService: diaryService,
+          isRecipe: isRecipe,
+          baseValue: baseValue,
         );
       },
-    ).whenComplete(() {
-      weightCtrl.dispose();
-      unitCtrl.dispose();
-    });
+    );
   }
 
   // ==========================================
@@ -556,11 +406,11 @@ class _DiaryScreenState extends State<DiaryScreen>
     required MealType type,
     required DiaryService diaryService,
   }) {
-    final nameCtrl = TextEditingController();
-    final calCtrl = TextEditingController();
-    final proCtrl = TextEditingController();
-    final fatCtrl = TextEditingController();
-    final carbCtrl = TextEditingController();
+    final nameCtrl = SafeTextEditingController();
+    final calCtrl = SafeTextEditingController();
+    final proCtrl = SafeTextEditingController();
+    final fatCtrl = SafeTextEditingController();
+    final carbCtrl = SafeTextEditingController();
 
     showDialog(
       context: ctx,
@@ -772,8 +622,8 @@ class _DiaryScreenState extends State<DiaryScreen>
     required MealType type,
     required DiaryService diaryService,
   }) {
-    final nameCtrl = TextEditingController();
-    final descCtrl = TextEditingController();
+    final nameCtrl = SafeTextEditingController();
+    final descCtrl = SafeTextEditingController();
     List<RecipeIngredient> ingredients = [];
     double totalCal = 0,
         totalPro = 0,
@@ -943,7 +793,7 @@ class _DiaryScreenState extends State<DiaryScreen>
                             );
                             if (chosen != null && ctx.mounted) {
                               final gramsCtrl =
-                                  TextEditingController();
+                                  SafeTextEditingController();
                               final gramsStr = await showDialog<String>(
                                 context: ctx,
                                 builder: (_) => AlertDialog(
@@ -965,9 +815,9 @@ class _DiaryScreenState extends State<DiaryScreen>
                                   actions: [
                                     TextButton(
                                       onPressed: () {
+                                        final text = gramsCtrl.text;
                                         gramsCtrl.dispose();
-                                        Navigator.pop(
-                                            ctx, gramsCtrl.text);
+                                        Navigator.pop(ctx, text);
                                       },
                                       child: const Text('OK'),
                                     ),
@@ -979,13 +829,11 @@ class _DiaryScreenState extends State<DiaryScreen>
                               if (grams <= 0) {
                                 ErrorHandler.show(
                                     ctx, 'Вес должен быть больше 0');
-                                gramsCtrl.dispose();
                                 return;
                               }
                               ingredients.add(RecipeIngredient(
                                   product: chosen, amountGrams: grams));
                               recalculate();
-                              gramsCtrl.dispose();
                             }
                           } catch (e) {
                             if (!ctx.mounted) {
@@ -1009,10 +857,10 @@ class _DiaryScreenState extends State<DiaryScreen>
                     Expanded(
                       child: ElevatedButton.icon(
                         onPressed: () {
-                          final nameCtrl = TextEditingController();
-                          final calCtrl = TextEditingController();
-                          final weightCtrl =
-                              TextEditingController(text: '100');
+                          final tempNameCtrl = SafeTextEditingController();
+                          final tempCalCtrl = SafeTextEditingController();
+                          final tempWeightCtrl =
+                              SafeTextEditingController(text: '100');
 
                           showDialog(
                             context: ctx,
@@ -1025,7 +873,7 @@ class _DiaryScreenState extends State<DiaryScreen>
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   TextField(
-                                    controller: nameCtrl,
+                                    controller: tempNameCtrl,
                                     style: TextStyle(
                                         color: AppColors.textPrimary),
                                     decoration: InputDecoration(
@@ -1038,7 +886,7 @@ class _DiaryScreenState extends State<DiaryScreen>
                                   Row(children: [
                                     Expanded(
                                       child: TextField(
-                                        controller: calCtrl,
+                                        controller: tempCalCtrl,
                                         keyboardType:
                                             TextInputType.number,
                                         style: TextStyle(
@@ -1054,7 +902,7 @@ class _DiaryScreenState extends State<DiaryScreen>
                                   ]),
                                   const SizedBox(height: 8),
                                   TextField(
-                                    controller: weightCtrl,
+                                    controller: tempWeightCtrl,
                                     keyboardType:
                                         TextInputType.number,
                                     style: TextStyle(
@@ -1070,16 +918,16 @@ class _DiaryScreenState extends State<DiaryScreen>
                               actions: [
                                 TextButton(
                                   onPressed: () {
-                                    nameCtrl.dispose();
-                                    calCtrl.dispose();
-                                    weightCtrl.dispose();
+                                    tempNameCtrl.dispose();
+                                    tempCalCtrl.dispose();
+                                    tempWeightCtrl.dispose();
                                     Navigator.pop(dCtx);
                                   },
                                   child: const Text('Отмена'),
                                 ),
                                 ElevatedButton(
                                   onPressed: () async {
-                                    final name = nameCtrl.text.trim();
+                                    final name = tempNameCtrl.text.trim();
                                     if (name.isEmpty ||
                                         name.length < 2) {
                                       ErrorHandler.show(ctx,
@@ -1087,10 +935,10 @@ class _DiaryScreenState extends State<DiaryScreen>
                                       return;
                                     }
                                     final calories =
-                                        double.tryParse(calCtrl.text) ??
+                                        double.tryParse(tempCalCtrl.text) ??
                                             0;
                                     final weight =
-                                        double.tryParse(weightCtrl.text) ??
+                                        double.tryParse(tempWeightCtrl.text) ??
                                             100;
 
                                     if (calories < 0 || weight <= 0) {
@@ -1108,9 +956,9 @@ class _DiaryScreenState extends State<DiaryScreen>
                                       fat: 0,
                                       carbs: 0,
                                     );
-                                    nameCtrl.dispose();
-                                    calCtrl.dispose();
-                                    weightCtrl.dispose();
+                                    tempNameCtrl.dispose();
+                                    tempCalCtrl.dispose();
+                                    tempWeightCtrl.dispose();
                                     Navigator.pop(dCtx);
                                     ingredients.add(RecipeIngredient(
                                       product: newP,
@@ -1255,7 +1103,7 @@ class _DiaryScreenState extends State<DiaryScreen>
   // ==========================================
   // ВСПОМОГАТЕЛЬНЫЕ ВИДЖЕТЫ
   // ==========================================
-  Widget _buildLabeledInput(TextEditingController ctrl, String label,
+  Widget _buildLabeledInput(SafeTextEditingController ctrl, String label,
       {bool isNumber = false, String? Function(String?)? validator}) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -1291,7 +1139,7 @@ class _DiaryScreenState extends State<DiaryScreen>
     );
   }
 
-  Widget _buildMacroInput(TextEditingController ctrl, String label,
+  Widget _buildMacroInput(SafeTextEditingController ctrl, String label,
       String unit,
       {bool isNumber = false, String? Function(String?)? validator}) {
     return Column(
@@ -1329,127 +1177,373 @@ class _DiaryScreenState extends State<DiaryScreen>
       ],
     );
   }
+}
 
-  // ==========================================
-  // КОММЕНТАРИЙ
-  // ==========================================
-  void _showComment({required BuildContext ctx, required MealType type}) {
-    final svc = ctx.read<DiaryService>();
-    final currentComment = svc.getCommentForType(type) ??
-        svc.meals[type]?.firstOrNull?.comment ??
-        '';
-    final ctrl = TextEditingController(text: currentComment);
+// ==========================================
+// НОВЫЙ ВИДЖЕТ ДЛЯ КОММЕНТАРИЯ (Stateful)
+// ==========================================
+class _CommentBottomSheet extends StatefulWidget {
+  final MealType mealType;
+  final String initialComment;
+  final Function(String?) onSave;
+  
+  const _CommentBottomSheet({
+    required this.mealType,
+    required this.initialComment,
+    required this.onSave,
+  });
+  
+  @override
+  State<_CommentBottomSheet> createState() => _CommentBottomSheetState();
+}
 
-    showModalBottomSheet(
-      context: ctx,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (_) => Container(
-        padding: EdgeInsets.only(
-          bottom: MediaQuery.of(ctx).viewInsets.bottom + 24,
-          top: 24,
-          left: 24,
-          right: 24,
-        ),
-        decoration: BoxDecoration(
-          color: AppColors.background,
-          borderRadius:
-              BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.backgroundSecondary,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 24),
-            Text('Комментарий к ${type.label}',
-                style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.w600),
-                textAlign: TextAlign.center),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(4),
+class _CommentBottomSheetState extends State<_CommentBottomSheet> {
+  late final SafeTextEditingController _ctrl;
+  
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = SafeTextEditingController(text: widget.initialComment);
+  }
+  
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+  
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+        top: 24,
+        left: 24,
+        right: 24,
+      ),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Center(
+            child: Container(
+              width: 40,
+              height: 4,
               decoration: BoxDecoration(
                 color: AppColors.backgroundSecondary,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
+          Text(
+            'Комментарий к ${widget.mealType.label}',
+            style: TextStyle(
+              color: AppColors.textPrimary,
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+            ),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 16),
+          Container(
+            padding: const EdgeInsets.all(4),
+            decoration: BoxDecoration(
+              color: AppColors.backgroundSecondary,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: TextField(
+              controller: _ctrl,
+              maxLines: 3,
+              style: TextStyle(color: AppColors.textPrimary),
+              decoration: InputDecoration(
+                hintText: 'Например: с маслом',
+                hintStyle: TextStyle(color: AppColors.textHint),
+                border: InputBorder.none,
+                contentPadding: const EdgeInsets.all(12),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          ElevatedButton(
+            onPressed: () {
+              final newComment = _ctrl.text.trim().isEmpty
+                  ? null
+                  : _ctrl.text.trim();
+              widget.onSave(newComment);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.accent,
+              foregroundColor: Colors.black,
+              shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: TextField(
-                controller: ctrl,
-                maxLines: 3,
-                style: TextStyle(color: AppColors.textPrimary),
-                decoration: InputDecoration(
-                  hintText: 'Например: с маслом',
-                  hintStyle: TextStyle(color: AppColors.textHint),
-                  border: InputBorder.none,
-                  contentPadding: const EdgeInsets.all(12),
-                ),
-              ),
             ),
-            const SizedBox(height: 16),
-            ElevatedButton(
-              // ✅ Все if с фигурными скобками + проверка mounted после await
-              onPressed: () async {
-                try {
-                  final newComment = ctrl.text.trim().isEmpty
-                      ? null
-                      : ctrl.text.trim();
-                  Navigator.pop(ctx);
-
-                  final success = await svc.updateComment(
-                    type: type,
-                    date: svc.date,
-                    comment: newComment,
-                  );
-
-                  // ✅ Проверка после await
-                  if (!ctx.mounted) {
-                    return;
-                  }
-
-                  if (!success) {
-                    ErrorHandler.show(
-                        ctx, 'Не удалось сохранить комментарий');
-                  }
-                } catch (e) {
-                  // ✅ Проверка после catch
-                  if (!ctx.mounted) {
-                    return;
-                  }
-                  ErrorHandler.show(
-                      ctx, ErrorHandler.format(e, context: 'comment'));
-                }
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.accent,
-                foregroundColor: Colors.black,
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
-              ),
-              child: const Text('Сохранить'),
-            ),
-          ],
-        ),
+            child: const Text('Сохранить'),
+          ),
+        ],
       ),
-    ).whenComplete(() {
-      ctrl.dispose();
-    });
+    );
   }
 }
 
+// ==========================================
+// НОВЫЙ ВИДЖЕТ ДЛЯ ВЫБОРА ПОРЦИИ (Stateful)
+// ==========================================
+class _PortionSelectorContent extends StatefulWidget {
+  final BuildContext sheetContext;
+  final BuildContext ctx;
+  final MealType type;
+  final dynamic item;
+  final DiaryService diaryService;
+  final bool isRecipe;
+  final double baseValue;
+
+  const _PortionSelectorContent({
+    required this.sheetContext,
+    required this.ctx,
+    required this.type,
+    required this.item,
+    required this.diaryService,
+    required this.isRecipe,
+    required this.baseValue,
+  });
+
+  @override
+  State<_PortionSelectorContent> createState() => _PortionSelectorContentState();
+}
+
+class _PortionSelectorContentState extends State<_PortionSelectorContent> {
+  late SafeTextEditingController _weightCtrl;
+  late SafeTextEditingController _unitCtrl;
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    final baseValue = widget.isRecipe 
+        ? (widget.item as Recipe).baseWeightGrams 
+        : 100.0;
+    _weightCtrl = SafeTextEditingController(text: baseValue.toInt().toString());
+    _unitCtrl = SafeTextEditingController(text: 'г');
+  }
+
+  @override
+  void dispose() {
+    _weightCtrl.dispose();
+    _unitCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final weightStr = _weightCtrl.text.replaceAll(RegExp(r'\D'), '');
+    double weight = weightStr.isEmpty
+        ? widget.baseValue
+        : (double.tryParse(weightStr) ?? widget.baseValue);
+
+    double currentCal, currentPro, currentFat, currentCarb;
+
+    if (widget.isRecipe) {
+      final recipe = widget.item;
+      double scale = weight / recipe.baseWeightGrams;
+      currentCal = recipe.totalCalories * scale;
+      currentPro = recipe.totalProtein * scale;
+      currentFat = recipe.totalFat * scale;
+      currentCarb = recipe.totalCarbs * scale;
+    } else {
+      final product = widget.item;
+      double ratio = weight / 100.0;
+      currentCal = product.calories * ratio;
+      currentPro = product.protein * ratio;
+      currentFat = product.fat * ratio;
+      currentCarb = product.carbs * ratio;
+    }
+
+    return Container(
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom,
+        top: 24,
+        left: 24,
+        right: 24,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.backgroundSecondary,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              widget.isRecipe ? ' ${widget.item.name}' : widget.item.name,
+              style: TextStyle(
+                  color: AppColors.textPrimary,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Row(
+            children: [
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.backgroundSecondary,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: TextField(
+                    controller: _weightCtrl,
+                    onChanged: (_) => setState(() {}),
+                    keyboardType: TextInputType.numberWithOptions(decimal: true),
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 20,
+                    ),
+                    decoration: InputDecoration(
+                      border: InputBorder.none,
+                      errorText: weight <= 0 ? 'Введите вес больше 0' : null,
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Container(
+                  decoration: BoxDecoration(
+                    color: AppColors.backgroundSecondary,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  child: TextField(
+                    controller: _unitCtrl,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 20,
+                    ),
+                    decoration: InputDecoration(border: InputBorder.none),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 20),
+          ElevatedButton(
+            onPressed: _isLoading ? null : _handleSave,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.accent,
+              foregroundColor: Colors.black,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(vertical: 16),
+            ),
+            child: _isLoading
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
+                    ),
+                  )
+                : const Text('Сохранить',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          ),
+          const SizedBox(height: 20),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: AppColors.backgroundSecondary,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Column(
+              children: [
+                Row(children: [
+                  Expanded(child: _NutrientCard('Калории', currentCal.toInt())),
+                  const SizedBox(width: 8),
+                  Expanded(child: _NutrientCard('Жиры', currentFat))
+                ]),
+                const SizedBox(height: 8),
+                Row(children: [
+                  Expanded(child: _NutrientCard('Углеводы', currentCarb)),
+                  const SizedBox(width: 8),
+                  Expanded(child: _NutrientCard('Белки', currentPro))
+                ]),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _handleSave() async {
+    final weightStr = _weightCtrl.text.replaceAll(RegExp(r'\D'), '');
+    final portionGrams = weightStr.isEmpty
+        ? widget.baseValue
+        : (double.tryParse(weightStr) ?? widget.baseValue);
+
+    if (portionGrams <= 0) {
+      ErrorHandler.show(widget.sheetContext, 'Вес должен быть больше 0');
+      return;
+    }
+    if (portionGrams > 10000) {
+      ErrorHandler.show(widget.sheetContext, 'Вес не может быть больше 10 кг');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final success = await widget.diaryService.addFoodItemToMeal(
+        type: widget.type,
+        item: widget.item,
+        portionGrams: portionGrams,
+      );
+
+      // 🔥 Закрываем модалку
+      if (mounted) {
+        Navigator.of(widget.sheetContext).pop();
+      }
+
+      // 🔥 ИСПРАВЛЕНО: используем глобальные методы вместо widget.ctx
+      if (success) {
+        ErrorHandler.showSuccessGlobal('Добавлено в дневник');
+      } else {
+        ErrorHandler.showGlobal('Не удалось добавить. Попробуйте снова');
+      }
+    } catch (e) {
+      debugPrint('❌ Add food item error: $e');
+      
+      // 🔥 Закрываем модалку при ошибке
+      if (mounted) {
+        Navigator.of(widget.sheetContext).pop();
+      }
+      
+      // 🔥 ИСПРАВЛЕНО: используем глобальные методы
+      ErrorHandler.showGlobal(
+        ErrorHandler.format(e, context: 'meal'),
+      );
+    }
+  }
+}
+
+// ==========================================
+// HEADER
+// ==========================================
 class _Header extends StatelessWidget {
   final DateTime date;
-  // ✅ Принимаем DateTime? в callback
   final ValueChanged<DateTime?> onDatePick;
   const _Header({required this.date, required this.onDatePick});
 
@@ -1482,7 +1576,6 @@ class _Header extends StatelessWidget {
               firstDate: DateTime(2020),
               lastDate: DateTime(2030),
             ).then((DateTime? d) {
-              // ✅ Проверка null + фигурные скобки
               if (d != null) {
                 if (context.mounted) {
                   onDatePick(d);

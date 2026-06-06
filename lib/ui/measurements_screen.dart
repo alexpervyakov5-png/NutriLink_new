@@ -4,11 +4,33 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../core/config.dart';
+import '../core/error_handler.dart'; // 🔥 ИСПРАВЛЕНО: добавлен импорт
 import '../data/models.dart';
 import '../data/services.dart';
 import '../data/clients_service.dart';
 import 'widgets.dart';
 
+// ============================================
+// ВСПОМОГАТЕЛЬНЫЕ КОНСТАНТЫ (локальные)
+// ============================================
+class _MeasurementsConstants {
+  // Диапазоны валидации
+  static const double weightMin = 30;
+  static const double weightMax = 300;
+  static const double chestMin = 50;
+  static const double chestMax = 200;
+  static const double waistMin = 40;
+  static const double waistMax = 200;
+  static const double hipsMin = 50;
+  static const double hipsMax = 200;
+  
+  // Даты
+  static const int datePickerFirstYear = 2020;
+}
+
+// ============================================
+// MeasurementsScreen
+// ============================================
 class MeasurementsScreen extends StatefulWidget {
   const MeasurementsScreen({super.key});
 
@@ -22,7 +44,6 @@ class _MeasurementsScreenState extends State<MeasurementsScreen> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    // Загружаем замеры при первом открытии или при смене клиента (вызывается из MainShell)
     if (!_isInitialized) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
@@ -41,70 +62,12 @@ class _MeasurementsScreenState extends State<MeasurementsScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      _showError(_formatError(e, context: 'load'));
+      // 🔥 ИСПРАВЛЕНО: используем централизованный ErrorHandler
+      ErrorHandler.show(context, ErrorHandler.format(e, context: 'measurements_load'));
     }
   }
 
-  String _formatError(Object? error, {String context = ''}) {
-    if (error == null) return 'Произошла непредвиденная ошибка';
-    
-    if (error is SocketException || 
-        error.toString().contains('SocketException') ||
-        error.toString().contains('Network is unreachable') ||
-        error.toString().contains('Connection refused') ||
-        error.toString().contains('Failed host lookup')) {
-      return 'Нет подключения к интернету. Проверьте соединение';
-    }
-    
-    if (error.toString().contains('PostgrestException') || 
-        error.toString().contains('database')) {
-      if (error.toString().contains('JWT expired')) {
-        return 'Сессия истекла. Пожалуйста, войдите снова';
-      }
-      if (error.toString().contains('row-level security') || 
-          error.toString().contains('permission denied')) {
-        return 'Ошибка доступа. Обратитесь в поддержку';
-      }
-      return 'Ошибка сохранения данных. Попробуйте позже';
-    }
-    
-    if (error is String) return error;
-    
-    if (context.isNotEmpty) {
-      switch (context) {
-        case 'load': return 'Не удалось загрузить замеры. Попробуйте снова';
-        case 'save': return 'Не удалось сохранить замер. Попробуйте снова';
-        case 'update': return 'Не удалось обновить замер';
-        case 'delete': return 'Не удалось удалить замер';
-      }
-    }
-    
-    return 'Произошла непредвиденная ошибка. Попробуйте снова';
-  }
-
-  void _showError(String message) {
-    if (!mounted) return;
-    
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.error_outline, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Expanded(child: Text(message, style: const TextStyle(color: Colors.white))),
-          ],
-        ),
-        backgroundColor: Colors.red.shade700,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 4),
-        action: SnackBarAction(
-          label: 'OK',
-          textColor: Colors.white,
-          onPressed: () => ScaffoldMessenger.of(context).hideCurrentSnackBar(),
-        ),
-      ),
-    );
-  }
+  // 🔥 УДАЛЕНО: _formatError и _showError — используем ErrorHandler
 
   @override
   Widget build(BuildContext context) {
@@ -180,6 +143,10 @@ class _MeasurementsScreenState extends State<MeasurementsScreen> {
   }
 }
 
+// ============================================
+// ВСПОМОГАТЕЛЬНЫЕ ВИДЖЕТЫ
+// ============================================
+
 class _Empty extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Center(
@@ -245,20 +212,17 @@ class _Card extends StatelessWidget {
         onDismissed: (_) async {
           try {
             await context.read<MeasurementsService>().delete(m.id);
+            // 🔥 ИСПРАВЛЕНО: используем свойство mounted состояния, а не параметра
             if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-                content: Text('Удалено'),
-                behavior: SnackBarBehavior.floating,
-              ));
+              // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
+              ErrorHandler.showSuccess(context, 'Удалено');
             }
           } catch (e) {
             if (context.mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(_formatErrorGlobal(e, context: 'delete')),
-                  backgroundColor: Colors.red,
-                  behavior: SnackBarBehavior.floating,
-                ),
+              // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
+              ErrorHandler.show(
+                context, 
+                ErrorHandler.format(e, context: 'measurements_delete'),
               );
             }
           }
@@ -340,90 +304,7 @@ class _Stat extends StatelessWidget {
 }
 
 // ==========================================
-//  ГЛОБАЛЬНЫЕ ФУНКЦИИ ДЛЯ ОШИБОК
-// ==========================================
-String _formatErrorGlobal(Object? error, {String context = ''}) {
-  if (error == null) return 'Произошла непредвиденная ошибка';
-  
-  if (error is SocketException || 
-      error.toString().contains('SocketException') ||
-      error.toString().contains('Network is unreachable') ||
-      error.toString().contains('Connection refused') ||
-      error.toString().contains('Failed host lookup')) {
-    return 'Нет подключения к интернету. Проверьте соединение';
-  }
-  
-  if (error.toString().contains('PostgrestException') || 
-      error.toString().contains('database')) {
-    if (error.toString().contains('JWT expired')) {
-      return 'Сессия истекла. Пожалуйста, войдите снова';
-    }
-    if (error.toString().contains('row-level security') || 
-        error.toString().contains('permission denied')) {
-      return 'Ошибка доступа. Обратитесь в поддержку';
-    }
-    return 'Ошибка сохранения данных. Попробуйте позже';
-  }
-  
-  if (error is String) return error;
-  
-  if (context.isNotEmpty) {
-    switch (context) {
-      case 'load': return 'Не удалось загрузить замеры. Попробуйте снова';
-      case 'save': return 'Не удалось сохранить замер. Попробуйте снова';
-      case 'update': return 'Не удалось обновить замер';
-      case 'delete': return 'Не удалось удалить замер';
-    }
-  }
-  
-  return 'Произошла непредвиденная ошибка. Попробуйте снова';
-}
-
-void _showErrorGlobal(BuildContext ctx, String message) {
-  if (!ctx.mounted) return;
-  
-  ScaffoldMessenger.of(ctx).showSnackBar(
-    SnackBar(
-      content: Row(
-        children: [
-          const Icon(Icons.error_outline, color: Colors.white, size: 20),
-          const SizedBox(width: 8),
-          Expanded(child: Text(message, style: const TextStyle(color: Colors.white))),
-        ],
-      ),
-      backgroundColor: Colors.red.shade700,
-      behavior: SnackBarBehavior.floating,
-      duration: const Duration(seconds: 4),
-      action: SnackBarAction(
-        label: 'OK',
-        textColor: Colors.white,
-        onPressed: () => ScaffoldMessenger.of(ctx).hideCurrentSnackBar(),
-      ),
-    ),
-  );
-}
-
-void _showSuccessGlobal(BuildContext ctx, String message) {
-  if (!ctx.mounted) return;
-  
-  ScaffoldMessenger.of(ctx).showSnackBar(
-    SnackBar(
-      content: Row(
-        children: [
-          const Icon(Icons.check_circle, color: Colors.white, size: 20),
-          const SizedBox(width: 8),
-          Expanded(child: Text(message, style: const TextStyle(color: Colors.white))),
-        ],
-      ),
-      backgroundColor: Colors.green.shade700,
-      behavior: SnackBarBehavior.floating,
-      duration: const Duration(seconds: 3),
-    ),
-  );
-}
-
-// ==========================================
-//  ФОРМА ДОБАВЛЕНИЯ/РЕДАКТИРОВАНИЯ
+// ФОРМА ДОБАВЛЕНИЯ/РЕДАКТИРОВАНИЯ
 // ==========================================
 void _showForm({
   required BuildContext ctx,
@@ -431,7 +312,9 @@ void _showForm({
   Measurement? edit,
 }) {
   final formKey = GlobalKey<FormState>();
-  final date = ValueNotifier(edit?.measuredAt ?? DateTime.now());
+  // 🔥 ИСПРАВЛЕНО: используем локальную переменную вместо ValueNotifier для простоты
+  DateTime selectedDate = edit?.measuredAt ?? DateTime.now();
+  
   final wCtrl = TextEditingController(text: edit?.weightKg?.toStringAsFixed(1) ?? '');
   final chCtrl = TextEditingController(text: edit?.chestCm?.toString() ?? '');
   final waCtrl = TextEditingController(text: edit?.waistCm?.toString() ?? '');
@@ -444,9 +327,9 @@ void _showForm({
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
     ),
-    builder: (_) => StatefulBuilder(builder: (ctx, set) => Container(
+    builder: (_) => StatefulBuilder(builder: (sheetCtx, setModalState) => Container(
       padding: EdgeInsets.only(
-          bottom: MediaQuery.of(ctx).viewInsets.bottom,
+          bottom: MediaQuery.of(sheetCtx).viewInsets.bottom,
           left: 20,
           right: 20,
           top: 20),
@@ -479,48 +362,47 @@ void _showForm({
                   fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 24),
-            ValueListenableBuilder<DateTime>(
-              valueListenable: date,
-              builder: (_, d, __) => InkWell(
-                onTap: () async {
-                  try {
-                    final nd = await showDatePicker(
-                      context: ctx,
-                      initialDate: d,
-                      firstDate: DateTime(2020),
-                      lastDate: DateTime.now(),
-                    );
-                    if (nd != null && ctx.mounted) {
-                      date.value = nd;
-                    }
-                  } catch (e) {
-                    if (ctx.mounted) {
-                      _showErrorGlobal(ctx, 'Не удалось выбрать дату');
-                    }
+            // 🔥 ИСПРАВЛЕНО: обновление даты через setModalState вместо ValueNotifier
+            InkWell(
+              onTap: () async {
+                try {
+                  final nd = await showDatePicker(
+                    context: sheetCtx,
+                    initialDate: selectedDate,
+                    firstDate: DateTime(_MeasurementsConstants.datePickerFirstYear),
+                    lastDate: DateTime.now(),
+                  );
+                  if (nd != null && sheetCtx.mounted) {
+                    setModalState(() => selectedDate = nd);
                   }
-                },
-                child: Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: AppColors.background,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.calendar_today, size: 18,
-                          color: AppColors.textHint),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Text(
-                          '${d.day.toString().padLeft(2, '0')} ${['янв', 'фев', 'мар', 'апр', 'мая', 'июн', 'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'][d.month - 1]} ${d.year}',
-                          style: const TextStyle(
-                              color: AppColors.textPrimary, fontSize: 14),
-                        ),
+                } catch (e) {
+                  if (sheetCtx.mounted) {
+                    // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
+                    ErrorHandler.show(sheetCtx, 'Не удалось выбрать дату');
+                  }
+                }
+              },
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.background,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.calendar_today, size: 18,
+                        color: AppColors.textHint),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        '${selectedDate.day.toString().padLeft(2, '0')} ${_monthName(selectedDate.month)} ${selectedDate.year}',
+                        style: const TextStyle(
+                            color: AppColors.textPrimary, fontSize: 14),
                       ),
-                      const Icon(Icons.chevron_right, size: 18,
-                          color: AppColors.textHint),
-                    ],
-                  ),
+                    ),
+                    const Icon(Icons.chevron_right, size: 18,
+                        color: AppColors.textHint),
+                  ],
                 ),
               ),
             ),
@@ -567,24 +449,26 @@ void _showForm({
                   final hips = double.tryParse(hiCtrl.text);
                   
                   if (weight == null && chest == null && waist == null && hips == null) {
-                    _showErrorGlobal(ctx, 'Заполните хотя бы одно поле');
+                    // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
+                    ErrorHandler.show(sheetCtx, 'Заполните хотя бы одно поле');
                     return;
                   }
                   
-                  if (weight != null && (weight < 30 || weight > 300)) {
-                    _showErrorGlobal(ctx, 'Вес должен быть от 30 до 300 кг');
+                  // 🔥 ИСПРАВЛЕНО: используем локальные константы
+                  if (weight != null && (weight < _MeasurementsConstants.weightMin || weight > _MeasurementsConstants.weightMax)) {
+                    ErrorHandler.show(sheetCtx, 'Вес должен быть от ${_MeasurementsConstants.weightMin} до ${_MeasurementsConstants.weightMax} кг');
                     return;
                   }
-                  if (chest != null && (chest < 50 || chest > 200)) {
-                    _showErrorGlobal(ctx, 'Грудь должна быть от 50 до 200 см');
+                  if (chest != null && (chest < _MeasurementsConstants.chestMin || chest > _MeasurementsConstants.chestMax)) {
+                    ErrorHandler.show(sheetCtx, 'Грудь должна быть от ${_MeasurementsConstants.chestMin} до ${_MeasurementsConstants.chestMax} см');
                     return;
                   }
-                  if (waist != null && (waist < 40 || waist > 200)) {
-                    _showErrorGlobal(ctx, 'Талия должна быть от 40 до 200 см');
+                  if (waist != null && (waist < _MeasurementsConstants.waistMin || waist > _MeasurementsConstants.waistMax)) {
+                    ErrorHandler.show(sheetCtx, 'Талия должна быть от ${_MeasurementsConstants.waistMin} до ${_MeasurementsConstants.waistMax} см');
                     return;
                   }
-                  if (hips != null && (hips < 50 || hips > 200)) {
-                    _showErrorGlobal(ctx, 'Бёдра должны быть от 50 до 200 см');
+                  if (hips != null && (hips < _MeasurementsConstants.hipsMin || hips > _MeasurementsConstants.hipsMax)) {
+                    ErrorHandler.show(sheetCtx, 'Бёдра должны быть от ${_MeasurementsConstants.hipsMin} до ${_MeasurementsConstants.hipsMax} см');
                     return;
                   }
                   
@@ -592,38 +476,44 @@ void _showForm({
                     if (edit != null) {
                       final success = await svc.update(
                         id: edit.id,
-                        at: date.value,
+                        at: selectedDate,
                         w: weight,
                         ch: chest,
                         wa: waist,
                         hi: hips,
                       );
-                      if (!ctx.mounted) return;
+                      if (!sheetCtx.mounted) return;
                       if (success) {
-                        _showSuccessGlobal(ctx, 'Замер обновлён');
-                        Navigator.pop(ctx);
+                        // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
+                        ErrorHandler.showSuccess(sheetCtx, 'Замер обновлён');
+                        Navigator.pop(sheetCtx);
                       } else {
-                        _showErrorGlobal(ctx, svc.error != null ? _formatErrorGlobal(svc.error!, context: 'update') : 'Не удалось обновить замер');
+                        // 🔥 svc.error уже отформатирован в сервисе
+                        ErrorHandler.show(sheetCtx, svc.error ?? 'Не удалось обновить замер');
                       }
                     } else {
                       final success = await svc.save(
-                        at: date.value,
+                        at: selectedDate,
                         w: weight,
                         ch: chest,
                         wa: waist,
                         hi: hips,
                       );
-                      if (!ctx.mounted) return;
+                      if (!sheetCtx.mounted) return;
                       if (success) {
-                        _showSuccessGlobal(ctx, 'Замер добавлен');
-                        Navigator.pop(ctx);
+                        ErrorHandler.showSuccess(sheetCtx, 'Замер добавлен');
+                        Navigator.pop(sheetCtx);
                       } else {
-                        _showErrorGlobal(ctx, svc.error != null ? _formatErrorGlobal(svc.error!, context: 'save') : 'Не удалось сохранить замер');
+                        ErrorHandler.show(sheetCtx, svc.error ?? 'Не удалось сохранить замер');
                       }
                     }
                   } catch (e) {
-                    if (!ctx.mounted) return;
-                    _showErrorGlobal(ctx, _formatErrorGlobal(e, context: edit != null ? 'update' : 'save'));
+                    if (!sheetCtx.mounted) return;
+                    // 🔥 ИСПРАВЛЕНО: используем централизованный ErrorHandler
+                    ErrorHandler.show(
+                      sheetCtx, 
+                      ErrorHandler.format(e, context: edit != null ? 'measurements_update' : 'measurements_save'),
+                    );
                   }
                 },
                 borderRadius: BorderRadius.circular(10),
@@ -650,5 +540,18 @@ void _showForm({
         ),
       ),
     )),
-  );
+  ).whenComplete(() {
+    // 🔥 ИСПРАВЛЕНО: освобождаем ресурсы контроллеров
+    wCtrl.dispose();
+    chCtrl.dispose();
+    waCtrl.dispose();
+    hiCtrl.dispose();
+    // 🔥 ValueNotifier больше не используется, поэтому dispose() не нужен
+  });
 }
+
+// Вспомогательная функция для названия месяца (вынесена из _Card для повторного использования)
+String _monthName(int m) => [
+      'янв', 'фев', 'мар', 'апр', 'мая', 'июн',
+      'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'
+    ][m - 1];

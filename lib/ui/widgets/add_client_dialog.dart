@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../../../core/config.dart';
 import '../../../data/services.dart';
 import '../../../data/models.dart';
+import '../../../core/error_handler.dart';
 
 class AddClientDialog extends StatefulWidget {
   const AddClientDialog({super.key});

@@ -6,13 +6,25 @@ import 'package:provider/provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../core/config.dart';
+import '../core/error_handler.dart'; // 🔥 ИСПРАВЛЕНО: добавлен импорт
 import '../data/services.dart';
 import '../data/clients_service.dart';
 import '../data/models.dart';
 import 'widgets/profile_code_card.dart';
 import 'trainer_clients_screen.dart';
-import 'widgets/custom_tab_icon.dart'; // 🔥 Импорт виджета кастомных иконок
+import 'widgets/custom_tab_icon.dart';
 
+// ============================================
+// ВСПОМОГАТЕЛЬНЫЕ КОНСТАНТЫ (локальные)
+// ============================================
+class _ProfileConstants {
+  static const int minPasswordLength = 6;
+  static const String passwordRegex = r'(?=.*[a-zA-Z])(?=.*\d)';
+}
+
+// ============================================
+// ProfileScreen
+// ============================================
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
 
@@ -52,7 +64,7 @@ class ProfileScreen extends StatelessWidget {
             ? [
                 IconButton(
                   icon: CustomIcon(
-                    path: '${AppStrings.assetIcons}people.png', // Используем people.png если есть
+                    path: '${AppStrings.assetIcons}people.png',
                     width: 24,
                     height: 24,
                     color: AppColors.accent,
@@ -119,13 +131,8 @@ class ProfileScreen extends StatelessWidget {
                     onCopy: () {
                       if (!context.mounted) return;
                       Clipboard.setData(ClipboardData(text: userCode));
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Код скопирован в буфер обмена'),
-                          duration: Duration(seconds: 2),
-                          behavior: SnackBarBehavior.floating,
-                        ),
-                      );
+                      // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
+                      ErrorHandler.showSuccess(context, 'Код скопирован в буфер обмена');
                     },
                   ),
                 const SizedBox(height: 24),
@@ -150,7 +157,6 @@ class ProfileScreen extends StatelessWidget {
                   child: Column(
                     children: [
                       _buildInfoRow(
-                        // 🔥 Кастомная иконка Email
                         iconPath: '${AppStrings.assetIcons}email.png',
                         fallbackIcon: Icons.email,
                         label: 'Email',
@@ -158,7 +164,6 @@ class ProfileScreen extends StatelessWidget {
                       ),
                       const Divider(color: AppColors.backgroundSecondary),
                       _buildInfoRow(
-                        // 🔥 Кастомная иконка Person
                         iconPath: '${AppStrings.assetIcons}person.png',
                         fallbackIcon: Icons.person,
                         label: 'Имя',
@@ -168,7 +173,6 @@ class ProfileScreen extends StatelessWidget {
                       ),
                       const Divider(color: AppColors.backgroundSecondary),
                       _buildInfoRow(
-                        // 🔥 Кастомная иконка Role (badge/school)
                         iconPath: isTrainer 
                             ? '${AppStrings.assetIcons}school.png' 
                             : '${AppStrings.assetIcons}badge.png',
@@ -198,7 +202,6 @@ class ProfileScreen extends StatelessWidget {
                     if (!context.mounted) return;
                     _showChangePasswordDialog(context, profileSvc);
                   },
-                  // 🔥 Кастомная иконка Lock
                   icon: CustomIcon(
                     path: '${AppStrings.assetIcons}lock.png',
                     width: 20,
@@ -271,100 +274,7 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  String _formatError(Object? error, {String context = ''}) {
-    if (error == null) return 'Произошла непредвиденная ошибка';
-
-    if (error is SocketException ||
-        error.toString().contains('SocketException') ||
-        error.toString().contains('Network is unreachable') ||
-        error.toString().contains('Connection refused') ||
-        error.toString().contains('Failed host lookup')) {
-      return 'Нет подключения к интернету. Проверьте соединение';
-    }
-
-    if (error is AuthException) {
-      final message = error.message.toLowerCase();
-      if (message.contains('weak password')) {
-        return 'Пароль слишком слабый. Используйте минимум 6 символов';
-      }
-      if (message.contains('email not confirmed')) {
-        return 'Подтвердите ваш email перед сменой пароля';
-      }
-      if (message.contains('jwt expired') || message.contains('session')) {
-        return 'Сессия истекла. Пожалуйста, войдите снова';
-      }
-      if (message.contains('rate limit')) {
-        return 'Слишком много попыток. Попробуйте позже';
-      }
-      return 'Ошибка авторизации: ${error.message}';
-    }
-
-    if (error.toString().contains('PostgrestException') ||
-        error.toString().contains('database')) {
-      if (error.toString().contains('JWT expired')) {
-        return 'Сессия истекла. Пожалуйста, войдите снова';
-      }
-      return 'Ошибка сервера. Попробуйте позже';
-    }
-
-    if (error is String) return error;
-
-    if (context.isNotEmpty) {
-      switch (context) {
-        case 'password':
-          return 'Не удалось сменить пароль. Попробуйте снова';
-      }
-    }
-
-    return 'Произошла непредвиденная ошибка. Попробуйте снова';
-  }
-
-  void _showError(BuildContext ctx, String message) {
-    if (!ctx.mounted) return;
-
-    ScaffoldMessenger.of(ctx).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.error_outline, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Expanded(
-                child: Text(message,
-                    style: const TextStyle(color: Colors.white))),
-          ],
-        ),
-        backgroundColor: Colors.red.shade700,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 4),
-        action: SnackBarAction(
-          label: 'OK',
-          textColor: Colors.white,
-          onPressed: () => ScaffoldMessenger.of(ctx).hideCurrentSnackBar(),
-        ),
-      ),
-    );
-  }
-
-  void _showSuccess(BuildContext ctx, String message) {
-    if (!ctx.mounted) return;
-
-    ScaffoldMessenger.of(ctx).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.check_circle, color: Colors.white, size: 20),
-            const SizedBox(width: 8),
-            Expanded(
-                child: Text(message,
-                    style: const TextStyle(color: Colors.white))),
-          ],
-        ),
-        backgroundColor: Colors.green.shade700,
-        behavior: SnackBarBehavior.floating,
-        duration: const Duration(seconds: 3),
-      ),
-    );
-  }
+  // 🔥 УДАЛЕНО: _formatError, _showError, _showSuccess — используем ErrorHandler
 
   void _showChangePasswordDialog(BuildContext context, ProfileService svc) {
     final passCtrl = TextEditingController();
@@ -376,7 +286,7 @@ class ProfileScreen extends StatelessWidget {
     showDialog(
       context: context,
       builder: (dialogCtx) => StatefulBuilder(
-        builder: (context, setState) => AlertDialog(
+        builder: (sheetCtx, setState) => AlertDialog(
           backgroundColor: AppColors.background,
           shape:
               RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
@@ -410,8 +320,12 @@ class ProfileScreen extends StatelessWidget {
                   ),
                   validator: (v) {
                     if (v == null || v.isEmpty) return 'Введите пароль';
-                    if (v.length < 6) return 'Минимум 6 символов';
-                    if (!RegExp(r'(?=.*[a-zA-Z])(?=.*\d)').hasMatch(v)) {
+                    // 🔥 ИСПРАВЛЕНО: используем локальную константу
+                    if (v.length < _ProfileConstants.minPasswordLength) {
+                      return 'Минимум ${_ProfileConstants.minPasswordLength} символов';
+                    }
+                    // 🔥 ИСПРАВЛЕНО: используем локальную константу
+                    if (!RegExp(_ProfileConstants.passwordRegex).hasMatch(v)) {
                       return 'Пароль должен содержать буквы и цифры';
                     }
                     return null;
@@ -461,42 +375,54 @@ class ProfileScreen extends StatelessWidget {
                 if (!formKey.currentState!.validate()) return;
 
                 if (passCtrl.text != confirmCtrl.text) {
-                  _showError(dialogCtx, 'Пароли не совпадают');
+                  // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
+                  ErrorHandler.show(dialogCtx, 'Пароли не совпадают');
                   return;
                 }
 
                 try {
                   final success = await svc.updatePassword(passCtrl.text);
 
-                  if (!dialogCtx.mounted) return;
+                  // 🔥 ИСПРАВЛЕНО: проверяем mounted у состояния диалога
+                  if (!sheetCtx.mounted) return;
 
                   if (success) {
                     Navigator.pop(dialogCtx);
+                    // 🔥 ИСПРАВЛЕНО: проверяем mounted у контекста экрана
                     if (context.mounted) {
-                      _showSuccess(context, 'Пароль успешно изменён');
+                      ErrorHandler.showSuccess(context, 'Пароль успешно изменён');
                     }
                     passCtrl.clear();
                     confirmCtrl.clear();
                   } else {
-                    _showError(
-                      dialogCtx,
-                      svc.error != null
-                          ? _formatError(svc.error!, context: 'password')
-                          : 'Не удалось сменить пароль',
+                    // 🔥 svc.error уже отформатирован в сервисе
+                    ErrorHandler.show(
+                      dialogCtx, 
+                      svc.error ?? 'Не удалось сменить пароль',
                     );
                   }
                 } on AuthException catch (e) {
-                  if (!dialogCtx.mounted) return;
-                  _showError(dialogCtx, _formatError(e, context: 'password'));
+                  if (!sheetCtx.mounted) return;
+                  // 🔥 ИСПРАВЛЕНО: используем централизованный ErrorHandler
+                  ErrorHandler.show(
+                    dialogCtx, 
+                    ErrorHandler.format(e, context: 'password_change'),
+                  );
                 } on SocketException catch (e) {
-                  if (!dialogCtx.mounted) return;
-                  _showError(dialogCtx, _formatError(e, context: 'password'));
+                  if (!sheetCtx.mounted) return;
+                  ErrorHandler.show(
+                    dialogCtx, 
+                    ErrorHandler.format(e, context: 'password_change'),
+                  );
                 } catch (e, stack) {
                   debugPrint('❌ Change password error: $e');
                   debugPrint('Stack: $stack');
 
-                  if (!dialogCtx.mounted) return;
-                  _showError(dialogCtx, _formatError(e, context: 'password'));
+                  if (!sheetCtx.mounted) return;
+                  ErrorHandler.show(
+                    dialogCtx, 
+                    ErrorHandler.format(e, context: 'password_change'),
+                  );
                 }
               },
               style: ElevatedButton.styleFrom(

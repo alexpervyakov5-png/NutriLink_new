@@ -1,5 +1,8 @@
 import 'package:flutter/foundation.dart';
+import 'package:flutter/material.dart';
 import '../core/config.dart';
+import '../core/error_handler.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' show PostgrestException, AuthException;
 
 class ClientInfo {
   final String id;
@@ -21,7 +24,6 @@ class ClientInfo {
 }
 
 class ClientsService extends ChangeNotifier {
-  // 🔥 Диагностика: отслеживаем экземпляр сервиса
   static int _instanceCounter = 0;
   final int _instanceId;
   
@@ -33,48 +35,45 @@ class ClientsService extends ChangeNotifier {
   bool _isInitialized = false;
 
   ClientsService() : _instanceId = ++_instanceCounter {
-    debugPrint('🆔 ClientsService instance #$_instanceId created');
+    if (kDebugMode) {
+      debugPrint('🆔 ClientsService instance #$_instanceId created');
+    }
   }
 
-  List<ClientInfo> get clients => _clients;
+  List<ClientInfo> get clients => List.unmodifiable(_clients);
   ClientInfo? get selectedClient => _selectedClient;
   bool get loading => _loading;
   String? get error => _error;
   bool get isTrainer => _isTrainer;
-  bool get hasClients => _clients.length > 1 && _isTrainer;
+  bool get hasClients => _isTrainer && _clients.any((c) => !c.isMe);
   bool get isLoaded => _isInitialized;
   
   bool get isViewingClient => _selectedClient != null && !_selectedClient!.isMe;
   bool get isViewingOwnData => _selectedClient?.isMe == true || !_isTrainer;
 
-  // 🔥 ИСПРАВЛЕНО: безопасный getter без null assertion operator
-  String get selectedUserId {
+  String? get selectedUserId {
     final clientUserId = _selectedClient?.id;
     final currentUserId = SupabaseConfig.currentUserId;
-    
-    // 🔥 Приоритет: выбранный клиент > текущий пользователь > пустая строка
-    final result = clientUserId ?? currentUserId ?? '';
+    final result = clientUserId ?? currentUserId;
     
     if (kDebugMode) {
       debugPrint('🔍 [Instance #$_instanceId] selectedUserId: '
           'client="${_selectedClient?.name}" → "$result"');
     }
     
-    // 🔥 Если результат пустой, логируем предупреждение
-    if (result.isEmpty) {
-      debugPrint('⚠️ [Instance #$_instanceId] selectedUserId is empty - user may be signed out');
+    if (result == null) {
+      debugPrint('⚠️ [Instance #$_instanceId] selectedUserId is null - user may be signed out');
     }
     
     return result;
   }
 
   Future<void> loadClients() async {
-    if (_isInitialized) return;
-    
-    // 🔥 Безопасное получение currentUserId
     final currentUserId = SupabaseConfig.currentUserId;
     if (currentUserId == null || currentUserId.isEmpty) {
       debugPrint('⚠️ loadClients: No authenticated user (currentUserId is null/empty)');
+      _error = 'Требуется авторизация';
+      notifyListeners();
       return;
     }
 
@@ -91,15 +90,14 @@ class ClientsService extends ChangeNotifier {
 
       if (user == null) {
         _error = 'Пользователь не найден';
-        _loading = false;
-        notifyListeners();
         return;
       }
 
       final userRoleId = user['role_id'] as String?;
-      _isTrainer = userRoleId == SupabaseConfig.trainerRoleId;
+      final trainerRoleId = await SupabaseConfig.getTrainerRoleId();
+      _isTrainer = userRoleId != null && trainerRoleId != null && userRoleId == trainerRoleId;
 
-      final trainerInfo = ClientInfo(
+      final me = ClientInfo(
         id: currentUserId,
         name: user['username'] as String? ?? 'Вы',
         email: user['email'] as String?,
@@ -108,12 +106,10 @@ class ClientsService extends ChangeNotifier {
       );
 
       if (!_isTrainer) {
-        _clients = [trainerInfo];
-        _selectedClient = trainerInfo;
+        _clients = [me];
+        _selectedClient = me;
         _isInitialized = true;
-        _loading = false;
-        notifyListeners();
-        debugPrint('✅ Client loaded: ${trainerInfo.name}');
+        debugPrint('✅ Client loaded: ${me.name}');
         return;
       }
 
@@ -124,7 +120,7 @@ class ClientsService extends ChangeNotifier {
           .order('username', ascending: true);
 
       _clients = [
-        trainerInfo,
+        me,
         ...clientsData.map((c) => ClientInfo(
               id: c['id'] as String,
               name: c['username'] as String? ?? 'Без имени',
@@ -134,11 +130,23 @@ class ClientsService extends ChangeNotifier {
             )),
       ];
 
-      _selectedClient = _clients.first;
+      final prevSelectedId = _selectedClient?.id;
+      _selectedClient = _clients.firstWhere(
+        (c) => c.id == prevSelectedId,
+        orElse: () => _clients.first,
+      );
+      
       _isInitialized = true;
       debugPrint('✅ Trainer loaded with ${_clients.length - 1} clients');
+      
+    } on PostgrestException catch (e) {
+      _error = ErrorHandler.format(e, context: 'clients');
+      debugPrint('❌ PostgrestException in loadClients: ${e.message}');
+    } on AuthException catch (e) {
+      _error = ErrorHandler.format(e);
+      debugPrint('❌ AuthException in loadClients: ${e.message}');
     } catch (e, stackTrace) {
-      _error = 'Ошибка загрузки клиентов: $e';
+      _error = ErrorHandler.format(e, context: 'clients');
       debugPrint('❌ Load clients error: $e');
       debugPrint('Stack: $stackTrace');
     } finally {
@@ -147,12 +155,26 @@ class ClientsService extends ChangeNotifier {
     }
   }
 
+  Future<void> refresh() async {
+    _isInitialized = false;
+    await loadClients();
+  }
+
   void selectClient(ClientInfo client) {
+    if (!_clients.any((c) => c.id == client.id)) {
+      debugPrint('⚠️ [Instance #$_instanceId] Attempted to select unknown client: ${client.id}');
+      return;
+    }
+    
     if (_selectedClient?.id != client.id) {
-      debugPrint('👤 [Instance #$_instanceId] SWITCHING: ${_selectedClient?.name} → ${client.name}');
-      debugPrint('🆔 New client: id=${client.id}, isMe=${client.isMe}');
+      if (kDebugMode) {
+        debugPrint('👤 [Instance #$_instanceId] SWITCHING: ${_selectedClient?.name} → ${client.name}');
+        debugPrint('🆔 New client: id=${client.id}, isMe=${client.isMe}');
+      }
       _selectedClient = client;
-      debugPrint('🔍 selectedUserId now: "${selectedUserId}"');
+      if (kDebugMode) {
+        debugPrint('🔍 selectedUserId now: "${selectedUserId}"');
+      }
       notifyListeners();
     }
   }
@@ -168,18 +190,28 @@ class ClientsService extends ChangeNotifier {
   }
 
   void clear() {
-    debugPrint('🧹 [Instance #$_instanceId] Clearing ClientsService');
+    if (kDebugMode) {
+      debugPrint('🧹 [Instance #$_instanceId] Clearing ClientsService');
+    }
     _clients.clear();
     _selectedClient = null;
     _isTrainer = false;
     _isInitialized = false;
     _error = null;
+    _loading = false;
     notifyListeners();
   }
   
-  // 🔥 НОВЫЙ МЕТОД: проверка, авторизован ли пользователь
   bool get isAuthenticated {
     final userId = SupabaseConfig.currentUserId;
     return userId != null && userId.isNotEmpty;
+  }
+
+  @override
+  void dispose() {
+    if (kDebugMode) {
+      debugPrint('🗑️ [Instance #$_instanceId] ClientsService disposed');
+    }
+    super.dispose();
   }
 }

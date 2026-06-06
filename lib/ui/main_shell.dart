@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../core/config.dart';
+import '../core/error_handler.dart'; // 🔥 ИСПРАВЛЕНО: добавлен импорт
 import '../data/clients_service.dart';
 import '../data/services.dart';
 import 'home_screen.dart';
@@ -13,8 +14,11 @@ import 'stats_screen.dart';
 import 'profile_screen.dart';
 import 'widgets/client_selector.dart';
 import 'widgets/custom_tab_icon.dart';
-import '../main.dart'; // 🔥 Импорт для доступа к signOutGlobally и navigatorKey
+import '../main.dart'; // Для доступа к signOutGlobally и navigatorKey
 
+// ============================================
+// MainShell
+// ============================================
 class MainShell extends StatefulWidget {
   const MainShell({super.key});
 
@@ -27,6 +31,9 @@ class _MainShellState extends State<MainShell> {
   bool _isSigningOut = false;
   bool _clientsInitialized = false;
   String? _lastSelectedUserId;
+  
+  // 🔥 ИСПРАВЛЕНО: храним ссылку на ClientsService для безопасного удаления слушателя
+  ClientsService? _clientsServiceRef;
 
   @override
   void initState() {
@@ -41,7 +48,10 @@ class _MainShellState extends State<MainShell> {
   Future<void> _initializeClients() async {
     if (!mounted) return;
     
+    // 🔥 ИСПРАВЛЕНО: сохраняем ссылку на сервис
     final clientsService = context.read<ClientsService>();
+    _clientsServiceRef = clientsService;
+    
     await clientsService.loadClients();
     _clientsInitialized = true;
     _lastSelectedUserId = clientsService.selectedUserId;
@@ -54,23 +64,24 @@ class _MainShellState extends State<MainShell> {
 
   @override
   void dispose() {
-    // 🔥 Сначала удаляем listener перед dispose
-    if (_clientsInitialized) {
+    // 🔥 ИСПРАВЛЕНО: удаляем слушатель через сохранённую ссылку, а не через context
+    if (_clientsInitialized && _clientsServiceRef != null) {
       try {
-        context.read<ClientsService>().removeListener(_onClientChanged);
+        _clientsServiceRef!.removeListener(_onClientChanged);
       } catch (e) {
         debugPrint('⚠️ Error removing listener: $e');
       }
+      _clientsServiceRef = null;
     }
-    // 🔥 Затем вызываем super.dispose()
     super.dispose();
   }
 
   void _onClientChanged() {
     if (!mounted) return;
     
-    final clientsService = context.read<ClientsService>();
-    if (clientsService.loading) return;
+    // 🔥 ИСПРАВЛЕНО: используем сохранённую ссылку
+    final clientsService = _clientsServiceRef;
+    if (clientsService == null || clientsService.loading) return;
 
     final newUserId = clientsService.selectedUserId;
     
@@ -86,6 +97,12 @@ class _MainShellState extends State<MainShell> {
   void _reloadAllServices({bool force = false}) {
     if (!mounted) return;
     
+    // 🔥 ИСПРАВЛЕНО: проверка авторизации перед загрузкой
+    if (!SupabaseConfig.isAuthorized) {
+      debugPrint('⚠️ _reloadAllServices: user not authorized, skipping');
+      return;
+    }
+    
     debugPrint('🔄 Reloading ALL services for user: $_lastSelectedUserId');
     
     context.read<ProfileService>().load(force: force);
@@ -96,6 +113,12 @@ class _MainShellState extends State<MainShell> {
 
   void _reloadCurrentScreenData({bool force = false}) {
     if (!mounted) return;
+    
+    // 🔥 ИСПРАВЛЕНО: проверка авторизации
+    if (!SupabaseConfig.isAuthorized) {
+      debugPrint('⚠️ _reloadCurrentScreenData: user not authorized, skipping');
+      return;
+    }
     
     debugPrint('📥 Reloading screen $_navIndex for user: $_lastSelectedUserId');
     
@@ -115,36 +138,7 @@ class _MainShellState extends State<MainShell> {
     }
   }
 
-  String _formatError(Object? error) {
-    if (error == null) return 'Произошла непредвиденная ошибка';
-    
-    final errorStr = error.toString();
-    if (error is SocketException || 
-        errorStr.contains('SocketException') ||
-        errorStr.contains('Network is unreachable') ||
-        errorStr.contains('Connection refused') ||
-        errorStr.contains('Failed host lookup')) {
-      return 'Нет подключения к интернету';
-    }
-    
-    if (errorStr.contains('JWT expired') || errorStr.contains('session')) {
-      return 'Сессия истекла. Войдите снова';
-    }
-    return 'Ошибка: $error';
-  }
-
-  void _showError(BuildContext ctx, String message) {
-    if (!ctx.mounted) return;
-    ScaffoldMessenger.of(ctx).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: Colors.red.shade700,
-        behavior: SnackBarBehavior.floating,
-      ),
-    );
-  }
-
-  // 🔥 МЕТОД _signOut() УДАЛЁН — используем signOutGlobally() из main.dart
+  // 🔥 УДАЛЕНО: _formatError и _showError — используем ErrorHandler
 
   @override
   Widget build(BuildContext context) {
@@ -156,12 +150,10 @@ class _MainShellState extends State<MainShell> {
         title: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            // 🔥 Логотип БЕЗ color параметра, чтобы сохранить оригинальные цвета
             CustomIcon(
               path: '${AppStrings.assetIcons}nutrilink.png',
               width: 32,
               height: 32,
-              // color: AppColors.accentLight, // <--- УДАЛЕНО!
               fallback: const Icon(Icons.restaurant, size: 32),
             ),
             const SizedBox(width: 8),
@@ -227,16 +219,12 @@ class _MainShellState extends State<MainShell> {
           }
         },
         items: [
+          // 🔥 ИСПРАВЛЕНО: убран activeIcon — CustomTabIcon сам управляет состоянием
           BottomNavigationBarItem(
             icon: CustomTabIcon(
               iconPath: '${AppStrings.assetIcons}home.png',
               activeIconPath: '${AppStrings.assetIcons}home_active.png',
               isActive: _navIndex == 0,
-            ),
-            activeIcon: CustomTabIcon(
-              iconPath: '${AppStrings.assetIcons}home.png',
-              activeIconPath: '${AppStrings.assetIcons}home_active.png',
-              isActive: true,
             ),
             label: 'Главная',
           ),
@@ -246,11 +234,6 @@ class _MainShellState extends State<MainShell> {
               activeIconPath: '${AppStrings.assetIcons}book_active.png',
               isActive: _navIndex == 1,
             ),
-            activeIcon: CustomTabIcon(
-              iconPath: '${AppStrings.assetIcons}book.png',
-              activeIconPath: '${AppStrings.assetIcons}book_active.png',
-              isActive: true,
-            ),
             label: 'Дневник',
           ),
           BottomNavigationBarItem(
@@ -259,11 +242,6 @@ class _MainShellState extends State<MainShell> {
               activeIconPath: '${AppStrings.assetIcons}measurements_active.png',
               isActive: _navIndex == 2,
             ),
-            activeIcon: CustomTabIcon(
-              iconPath: '${AppStrings.assetIcons}measurements.png',
-              activeIconPath: '${AppStrings.assetIcons}measurements_active.png',
-              isActive: true,
-            ),
             label: 'Замеры',
           ),
           BottomNavigationBarItem(
@@ -271,11 +249,6 @@ class _MainShellState extends State<MainShell> {
               iconPath: '${AppStrings.assetIcons}stats.png',
               activeIconPath: '${AppStrings.assetIcons}stats_active.png',
               isActive: _navIndex == 3,
-            ),
-            activeIcon: CustomTabIcon(
-              iconPath: '${AppStrings.assetIcons}stats.png',
-              activeIconPath: '${AppStrings.assetIcons}stats_active.png',
-              isActive: true,
             ),
             label: 'Статистика',
           ),
@@ -352,17 +325,26 @@ class _MainShellState extends State<MainShell> {
             title: const Text('Выйти', style: TextStyle(color: Colors.red)),
             enabled: !_isSigningOut,
             onTap: () async {
-              // 🔥 Закрываем меню
               Navigator.of(menuContext).pop();
               
-              // 🔥 Ждем закрытия меню
               await Future.delayed(const Duration(milliseconds: 300));
               
-              // 🔥 Проверяем, что виджет еще активен
               if (!mounted) return;
               
-              // 🔥 ВЫЗЫВАЕМ ГЛОБАЛЬНУЮ ФУНКЦИЮ — она не зависит от контекста виджета!
-              signOutGlobally();
+              // 🔥 Используем глобальную функцию signOutGlobally()
+              setState(() => _isSigningOut = true);
+              try {
+                await signOutGlobally();
+              } catch (e) {
+                if (mounted) {
+                  // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
+                  ErrorHandler.show(context, ErrorHandler.format(e, context: 'logout'));
+                }
+              } finally {
+                if (mounted) {
+                  setState(() => _isSigningOut = false);
+                }
+              }
             },
           ),
         ],
