@@ -1,3 +1,4 @@
+import 'package:Nutrilink/main.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/config.dart';
@@ -13,6 +14,7 @@ void showCreateProductDialog({
   required DiaryService diaryService,
   required Function(BuildContext, MealType, dynamic, DiaryService)
       openPortionSelector,
+  Function(Product)? onProductCreated, // 🔥 Новый callback
 }) {
   final nameCtrl = SafeTextEditingController();
   final calCtrl = SafeTextEditingController();
@@ -143,11 +145,20 @@ void showCreateProductDialog({
 
                       if (!dialogContext.mounted) return;
 
-                      // 🔥 Закрываем диалог
                       Navigator.of(dialogContext).pop();
 
                       if (newP != null) {
-                        // 🔥 Показываем простое уведомление
+                        // 🔥 Вызываем callback если он есть
+                        if (onProductCreated != null) {
+                          onProductCreated(newP);
+                        } else {
+                          // 🔥 Иначе открываем PortionSelector
+                          await Future.delayed(const Duration(milliseconds: 300));
+                          final globalCtx = navigatorKey.currentContext;
+                          if (globalCtx != null && globalCtx.mounted) {
+                            openPortionSelector(globalCtx, type, newP, diaryService);
+                          }
+                        }
                         ErrorHandler.showSuccessGlobal('Продукт создан');
                       }
                     } catch (e) {
