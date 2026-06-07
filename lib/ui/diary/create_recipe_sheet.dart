@@ -181,47 +181,52 @@ void showCreateRecipeSheet({
                             ),
                           );
                           if (chosen != null && context.mounted) {
-                            final gramsCtrl =
-                                SafeTextEditingController();
-                            final gramsStr = await showDialog<String>(
+                            final grams = await showDialog<double>(
                               context: context,
-                              builder: (_) => AlertDialog(
-                                backgroundColor: AppColors.background,
-                                title: Text('Вес (г)',
+                              builder: (dialogContext) {
+                                final gramsCtrl = SafeTextEditingController(text: '100');
+                                return AlertDialog(
+                                  backgroundColor: AppColors.background,
+                                  title: Text('Вес (г)',
+                                      style: TextStyle(
+                                          color: AppColors.textPrimary)),
+                                  content: TextField(
+                                    controller: gramsCtrl,
+                                    keyboardType: TextInputType
+                                        .numberWithOptions(decimal: true),
+                                    autofocus: true,
                                     style: TextStyle(
-                                        color: AppColors.textPrimary)),
-                                content: TextField(
-                                  controller: gramsCtrl,
-                                  keyboardType: TextInputType
-                                      .numberWithOptions(decimal: true),
-                                  autofocus: true,
-                                  style: TextStyle(
-                                      color: AppColors.textPrimary),
-                                  decoration:
-                                      InputDecoration(hintText: '100'),
-                                ),
-                                actions: [
-                                  TextButton(
-                                    onPressed: () {
-                                      final text = gramsCtrl.text;
-                                      gramsCtrl.dispose();
-                                      Navigator.pop(context, text);
-                                    },
-                                    child: const Text('OK'),
+                                        color: AppColors.textPrimary),
+                                    decoration:
+                                        InputDecoration(hintText: '100'),
                                   ),
-                                ],
-                              ),
+                                  actions: [
+                                    TextButton(
+                                      onPressed: () {
+                                        Navigator.pop(dialogContext);
+                                      },
+                                      child: const Text('Отмена'),
+                                    ),
+                                    ElevatedButton(
+                                      onPressed: () {
+                                        final gramsValue = double.tryParse(gramsCtrl.text) ?? 100.0;
+                                        Navigator.pop(dialogContext, gramsValue);
+                                      },
+                                      child: const Text('OK'),
+                                    ),
+                                  ],
+                                );
+                              },
                             );
-                            final grams =
-                                double.tryParse(gramsStr ?? '') ?? 100;
-                            if (grams <= 0) {
+                            
+                            if (grams != null && grams > 0) {
+                              ingredients.add(RecipeIngredient(
+                                  product: chosen, amountGrams: grams));
+                              recalculate();
+                            } else {
                               ErrorHandler.showGlobal(
                                   'Вес должен быть больше 0');
-                              return;
                             }
-                            ingredients.add(RecipeIngredient(
-                                product: chosen, amountGrams: grams));
-                            recalculate();
                           }
                         } catch (e) {
                           if (!context.mounted) return;
@@ -248,105 +253,112 @@ void showCreateRecipeSheet({
 
                         showDialog(
                           context: context,
-                          builder: (dCtx) => AlertDialog(
-                            backgroundColor: AppColors.background,
-                            title: Text('Новый продукт',
-                                style: TextStyle(
-                                    color: AppColors.textPrimary)),
-                            content: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                TextField(
-                                  controller: tempNameCtrl,
-                                  style: TextStyle(
-                                      color: AppColors.textPrimary),
-                                  decoration: InputDecoration(
-                                    labelText: 'Название',
-                                    labelStyle: TextStyle(
-                                        color: AppColors.textSecondary),
-                                  ),
-                                ),
-                                const SizedBox(height: 8),
-                                Row(children: [
-                                  Expanded(
-                                    child: TextField(
-                                      controller: tempCalCtrl,
-                                      keyboardType: TextInputType.number,
+                          builder: (dCtx) => StatefulBuilder(
+                            builder: (dialogContext, setDialogState) {
+                              return AlertDialog(
+                                backgroundColor: AppColors.background,
+                                title: Text('Новый продукт',
+                                    style: TextStyle(
+                                        color: AppColors.textPrimary)),
+                                content: Column(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    TextField(
+                                      controller: tempNameCtrl,
                                       style: TextStyle(
                                           color: AppColors.textPrimary),
                                       decoration: InputDecoration(
-                                        labelText: 'Ккал/100г',
+                                        labelText: 'Название',
                                         labelStyle: TextStyle(
                                             color: AppColors.textSecondary),
                                       ),
                                     ),
-                                  ),
-                                ]),
-                                const SizedBox(height: 8),
-                                TextField(
-                                  controller: tempWeightCtrl,
-                                  keyboardType: TextInputType.number,
-                                  style: TextStyle(
-                                      color: AppColors.textPrimary),
-                                  decoration: InputDecoration(
-                                    labelText: 'Вес (г)',
-                                    labelStyle: TextStyle(
-                                        color: AppColors.textSecondary),
-                                  ),
+                                    const SizedBox(height: 8),
+                                    Row(children: [
+                                      Expanded(
+                                        child: TextField(
+                                          controller: tempCalCtrl,
+                                          keyboardType: TextInputType.number,
+                                          style: TextStyle(
+                                              color: AppColors.textPrimary),
+                                          decoration: InputDecoration(
+                                            labelText: 'Ккал/100г',
+                                            labelStyle: TextStyle(
+                                                color: AppColors.textSecondary),
+                                          ),
+                                        ),
+                                      ),
+                                    ]),
+                                    const SizedBox(height: 8),
+                                    TextField(
+                                      controller: tempWeightCtrl,
+                                      keyboardType: TextInputType.number,
+                                      style: TextStyle(
+                                          color: AppColors.textPrimary),
+                                      decoration: InputDecoration(
+                                        labelText: 'Вес (г)',
+                                        labelStyle: TextStyle(
+                                            color: AppColors.textSecondary),
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                              ],
-                            ),
-                            actions: [
-                              TextButton(
-                                onPressed: () {
-                                  tempNameCtrl.dispose();
-                                  tempCalCtrl.dispose();
-                                  tempWeightCtrl.dispose();
-                                  Navigator.pop(dCtx);
-                                },
-                                child: const Text('Отмена'),
-                              ),
-                              ElevatedButton(
-                                onPressed: () async {
-                                  final name = tempNameCtrl.text.trim();
-                                  if (name.isEmpty || name.length < 2) {
-                                    ErrorHandler.showGlobal(
-                                        'Введите название (мин. 2 символа)');
-                                    return;
-                                  }
-                                  final calories =
-                                      double.tryParse(tempCalCtrl.text) ?? 0;
-                                  final weight =
-                                      double.tryParse(tempWeightCtrl.text) ?? 100;
+                                actions: [
+                                  TextButton(
+                                    onPressed: () {
+                                      if (dialogContext.mounted) {
+                                        Navigator.pop(dialogContext);
+                                      }
+                                    },
+                                    child: const Text('Отмена'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: () {
+                                      final name = tempNameCtrl.text.trim();
+                                      final caloriesStr = tempCalCtrl.text;
+                                      final weightStr = tempWeightCtrl.text;
+                                      
+                                      if (name.isEmpty || name.length < 2) {
+                                        ErrorHandler.showGlobal(
+                                            'Введите название (мин. 2 символа)');
+                                        return;
+                                      }
+                                      final calories =
+                                          double.tryParse(caloriesStr) ?? 0;
+                                      final weight =
+                                          double.tryParse(weightStr) ?? 100;
 
-                                  if (calories < 0 || weight <= 0) {
-                                    ErrorHandler.showGlobal(
-                                        'Проверьте введённые значения');
-                                    return;
-                                  }
+                                      if (calories < 0 || weight <= 0) {
+                                        ErrorHandler.showGlobal(
+                                            'Проверьте введённые значения');
+                                        return;
+                                      }
 
-                                  final newP = Product(
-                                    id:
-                                        'temp_${DateTime.now().millisecondsSinceEpoch}',
-                                    name: name,
-                                    calories: calories,
-                                    protein: 0,
-                                    fat: 0,
-                                    carbs: 0,
-                                  );
-                                  tempNameCtrl.dispose();
-                                  tempCalCtrl.dispose();
-                                  tempWeightCtrl.dispose();
-                                  Navigator.pop(dCtx);
-                                  ingredients.add(RecipeIngredient(
-                                    product: newP,
-                                    amountGrams: weight,
-                                  ));
-                                  recalculate();
-                                },
-                                child: const Text('Добавить'),
-                              ),
-                            ],
+                                      final newP = Product(
+                                        id:
+                                            'temp_${DateTime.now().millisecondsSinceEpoch}',
+                                        name: name,
+                                        calories: calories,
+                                        protein: 0,
+                                        fat: 0,
+                                        carbs: 0,
+                                      );
+                                      
+                                      if (dialogContext.mounted) {
+                                        Navigator.pop(dialogContext);
+                                      }
+                                      
+                                      ingredients.add(RecipeIngredient(
+                                        product: newP,
+                                        amountGrams: weight,
+                                      ));
+                                      recalculate();
+                                    },
+                                    child: const Text('Добавить'),
+                                  ),
+                                ],
+                              );
+                            },
                           ),
                         );
                       },
@@ -399,7 +411,6 @@ void showCreateRecipeSheet({
                 onPressed: ingredients.isEmpty
                     ? null
                     : () async {
-                        // 🔥 Сохраняем значения ПЕРЕД async
                         final name = nameCtrl.text.trim();
                         final description = descCtrl.text;
                         
@@ -427,19 +438,15 @@ void showCreateRecipeSheet({
                             ingredients: ingredients,
                           );
                           
-                          // 🔥 Проверяем mounted перед использованием
-                          if (!context.mounted) return;
-
-                          if (recipe != null) {
+                          // 🔥 Закрываем модалку
+                          if (context.mounted) {
                             Navigator.pop(context);
-                            Future.microtask(() {
-                              if (ctx.mounted) {
-                                openPortionSelector(
-                                    ctx, type, recipe, diaryService);
-                                ErrorHandler.showSuccessGlobal(
-                                    'Рецепт создан');
-                              }
-                            });
+                          }
+
+                          // 🔥 Просто показываем уведомление
+                          if (recipe != null) {
+                            ErrorHandler.showSuccessGlobal(
+                                'Рецепт создан');
                           } else {
                             ErrorHandler.showGlobal(
                                 'Не удалось создать рецепт. Попробуйте снова');
@@ -466,9 +473,5 @@ void showCreateRecipeSheet({
         );
       },
     ),
-  ).whenComplete(() {
-    // 🔥 Безопасное удаление контроллеров
-    nameCtrl.dispose();
-    descCtrl.dispose();
-  });
+  );
 }

@@ -35,7 +35,13 @@ class _DiaryScreenState extends State<DiaryScreen>
     if (!_isInitialized || !_isSameDate(DateTime.now(), _lastLoadedDate)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (mounted) {
-          context.read<DiaryService>().refresh();
+          final diaryService = context.read<DiaryService>();
+          diaryService.refresh();
+          
+          // 🔥 Предзагружаем продукты и рецепты в фоне
+          // Чтобы при открытии поиска данные уже были в кэше
+          diaryService.preloadFoodItems();
+          
           _lastLoadedDate = DateTime.now();
           _isInitialized = true;
         }

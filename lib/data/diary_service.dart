@@ -37,21 +37,25 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
   
   Timer? _summaryUpdateTimer;
 
-  // 🔥 КЭШИ для продуктов и рецептов
+  // ============================================
+  // КЭШИ
+  // ============================================
+  
+  // Кэши для продуктов и рецептов
   List<Product>? _cachedProducts;
   DateTime? _productsCacheTime;
   List<Recipe>? _cachedRecipes;
   DateTime? _recipesCacheTime;
   
-  // 🔥 КЭШИ для дневника (meals и goals)
+  // Кэши для дневника (meals и goals)
   Map<MealType, List<Meal>>? _cachedMeals;
   DateTime? _mealsDataCacheTime;
   DailyGoals? _cachedGoals;
   DateTime? _goalsCacheTime;
   
-  // 🔥 КЭШ для списка еды (продукты + рецепты)
-  List<dynamic>? _cachedFoodItems;
-  DateTime? _foodItemsCacheTime;
+  // Флаг предзагрузки списка еды
+  bool _isFoodPreloaded = false;
+  bool get isFoodPreloaded => _isFoodPreloaded;
   
   static const Duration _cacheDuration = Duration(minutes: 2);
   static const Duration _foodCacheDuration = Duration(minutes: 5);
@@ -74,20 +78,44 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       _mealsCacheTime[t] = null;
     }
     _goals = null;
+    _clearAllCaches();
+    notifyListeners();
+    refresh();
+  }
+
+  // ============================================
+  // ОЧИСТКА КЭШЕЙ
+  // ============================================
+  void _clearAllCaches() {
     _cachedProducts = null;
-    _cachedRecipes = null;
     _productsCacheTime = null;
+    _cachedRecipes = null;
     _recipesCacheTime = null;
     _cachedMeals = null;
     _mealsDataCacheTime = null;
     _cachedGoals = null;
     _goalsCacheTime = null;
-    _cachedFoodItems = null;
-    _foodItemsCacheTime = null;
-    notifyListeners();
-    refresh();
+    _isFoodPreloaded = false;
   }
 
+  void _clearFoodCaches() {
+    _cachedProducts = null;
+    _productsCacheTime = null;
+    _cachedRecipes = null;
+    _recipesCacheTime = null;
+    _isFoodPreloaded = false;
+  }
+
+  void _clearMealsCaches() {
+    _cachedMeals = null;
+    _mealsDataCacheTime = null;
+    _cachedGoals = null;
+    _goalsCacheTime = null;
+  }
+
+  // ============================================
+  // GETTERS
+  // ============================================
   DailyGoals? get goals => _goals;
   Map<MealType, List<Meal>> get meals => _meals;
   Map<MealType, bool> get expanded => _expanded;
@@ -97,13 +125,80 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
   String? get error => _error;
 
   // ============================================
-  // 🔥 КЭШИРОВАНИЕ GOALS
+  // ПРЕДЗАГРУЗКА ДАННЫХ
+  // ============================================
+  
+  /// Предзагрузка списка еды в фоне
+  /// Вызывается при открытии дневника, чтобы при открытии поиска
+  /// данные уже были в кэше
+  Future<void> preloadFoodItems() async {
+    if (_isFoodPreloaded) {
+      debugPrint('📦 Food items already preloaded');
+      return;
+    }
+    
+    final uid = userId;
+    if (uid == null || uid.isEmpty) return;
+    
+    debugPrint('🚀 Preloading food items in background...');
+    
+    try {
+      // Загружаем параллельно продукты и рецепты
+      await Future.wait([
+        getProducts(''),
+        _preloadRecipes(),
+      ]);
+      
+      _isFoodPreloaded = true;
+      debugPrint('✅ Food items preloaded successfully');
+    } catch (e) {
+      debugPrint('❌ Preload food items error: $e');
+    }
+  }
+
+  Future<void> _preloadRecipes() async {
+    try {
+      final uid = userId;
+      if (uid == null) return;
+      
+      if (_cachedRecipes != null && 
+          _recipesCacheTime != null &&
+          DateTime.now().difference(_recipesCacheTime!) < _cacheDuration) {
+        return;
+      }
+      
+      final recipesResponse = await retryRequest(() => 
+        SupabaseConfig.client.from('recipes').select(
+          'id,name,description,base_weight_grams,total_calories,total_protein,total_fat,total_carbs,created_by,recipe_products(amount_grams,product_id,products(id,name,calories,protein,fat,carbs,user_id))'
+        ).or('created_by.is.null,created_by.eq.$uid').limit(50)
+      );
+      
+      _cachedRecipes = recipesResponse.map((j) {
+        final ingredients = (j['recipe_products'] as List? ?? []).map((rp) {
+          return RecipeIngredient(
+            product: Product.fromJson(rp['products']),
+            amountGrams: (rp['amount_grams'] as num).toDouble(),
+          );
+        }).toList();
+        return Recipe.fromJson(j, ingredients);
+      }).toList();
+      
+      _recipesCacheTime = DateTime.now();
+      debugPrint('💾 Preloaded ${_cachedRecipes!.length} recipes');
+    } catch (e) {
+      debugPrint('❌ Preload recipes error: $e');
+    }
+  }
+
+  // ============================================
+  // ЗАГРУЗКА GOALS
   // ============================================
   Future<void> _loadGoalsOnly(DateTime d, {bool force = false}) async {
     final uid = userId;
     if (uid == null || uid.isEmpty) return;
     final ds = d.toIso8601String().split('T')[0];
 
+    // Проверяем кэш (если не force и кэш свежий)
     if (!force && 
         _cachedGoals != null && 
         _goalsCacheTime != null &&
@@ -141,6 +236,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         caloriesCurrent: toIntSafe(sum?['calories_actual']),
       );
       
+      // Сохраняем в кэш
       _cachedGoals = _goals;
       _goalsCacheTime = DateTime.now();
       debugPrint('💾 Cached goals');
@@ -151,7 +247,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
   }
 
   // ============================================
-  // 🔥 КЭШИРОВАНИЕ MEALS
+  // ЗАГРУЗКА MEALS С ГРУППИРОВКОЙ
   // ============================================
   Future<void> _loadMealsOfType(MealType type, DateTime d, {bool force = false}) async {
     _mealsCacheTime[type] = null;
@@ -159,6 +255,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     if (uid == null || uid.isEmpty) return;
     final ds = d.toIso8601String().split('T')[0];
 
+    // Проверяем кэш (если не force и кэш свежий)
     if (!force && 
         _cachedMeals != null && 
         _mealsDataCacheTime != null &&
@@ -182,6 +279,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
 
       debugPrint('📦 Got ${mealsData.length} meals');
 
+      // Собираем все meal_items из всех meals этого типа
       final List<Map<String, dynamic>> allItems = [];
       String? comment;
       DateTime? eatenAt;
@@ -217,21 +315,25 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         }
         _meals[type] = [];
         
+        // Обновляем кэш
         _cachedMeals ??= {};
         _cachedMeals![type] = [];
         _mealsDataCacheTime = DateTime.now();
         return;
       }
 
+      // ГРУППИРОВКА: объединяем одинаковые продукты по product_id или recipe_id
       final Map<String, Map<String, dynamic>> groupedItems = {};
       
       for (var it in allItems) {
         final productId = it['product_id'] as String?;
         final recipeId = it['recipe_id'] as String?;
         
+        // Ключ для группировки: product_id или recipe_id
         final key = productId ?? (recipeId != null ? 'recipe_$recipeId' : 'item_${it['id']}');
         
         if (groupedItems.containsKey(key)) {
+          // Если продукт уже есть — суммируем значения
           final existing = groupedItems[key]!;
           existing['amount_grams'] = toIntSafe(existing['amount_grams']) + toIntSafe(it['amount_grams']);
           existing['calories'] = toIntSafe(existing['calories']) + toIntSafe(it['calories']);
@@ -239,6 +341,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
           existing['fat'] = toIntSafe(existing['fat']) + toIntSafe(it['fat']);
           existing['carbs'] = toIntSafe(existing['carbs']) + toIntSafe(it['carbs']);
         } else {
+          // Новый продукт — добавляем как есть
           groupedItems[key] = {
             'id': it['id'],
             'amount_grams': it['amount_grams'],
@@ -254,6 +357,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         }
       }
 
+      // Создаём отдельный Meal для каждой группы продуктов
       final List<Meal> meals = [];
       
       for (var it in groupedItems.values) {
@@ -297,13 +401,14 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       
       _meals[type] = meals;
       
+      // Обновляем кэш
       _cachedMeals ??= {};
       _cachedMeals![type] = meals;
       _mealsDataCacheTime = DateTime.now();
       
       debugPrint('✅ Loaded and cached ${meals.length} meals for $type');
     } catch (e, stackTrace) {
-      debugPrint(' Meals load error ($type): $e');
+      debugPrint('❌ Meals load error ($type): $e');
       debugPrint('❌ Stack: $stackTrace');
     }
   }
@@ -311,13 +416,11 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
   Future<void> load(DateTime d, {MealType? loadMealsOfType, bool force = false}) async {
     _date = d;
     
+    // Если кэш устарел — сбрасываем его
     if (_mealsDataCacheTime != null && 
         DateTime.now().difference(_mealsDataCacheTime!) > _cacheDuration) {
       debugPrint('🗑️ Meals cache expired, clearing...');
-      _cachedMeals = null;
-      _mealsDataCacheTime = null;
-      _cachedGoals = null;
-      _goalsCacheTime = null;
+      _clearMealsCaches();
     }
     
     if (shouldReload(force: force)) {
@@ -358,7 +461,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
   }
 
   // ============================================
-  // 🔥 КЭШИРОВАНИЕ ПРОДУКТОВ
+  // ПРОДУКТЫ
   // ============================================
   Future<List<Product>> getProducts(String query) async {
     try {
@@ -413,10 +516,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       
       final product = Product.fromJson(res);
       
-      _cachedProducts = null;
-      _productsCacheTime = null;
-      _cachedFoodItems = null;
-      _foodItemsCacheTime = null;
+      _clearFoodCaches();
       
       return product;
     } catch (e) {
@@ -442,10 +542,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         'carbs': carb,
       }).eq('id', id));
       
-      _cachedProducts = null;
-      _productsCacheTime = null;
-      _cachedFoodItems = null;
-      _foodItemsCacheTime = null;
+      _clearFoodCaches();
       
       return true;
     } catch (e) {
@@ -459,10 +556,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       await retryRequest(() =>
           SupabaseConfig.client.from('products').delete().eq('id', productId));
       
-      _cachedProducts = null;
-      _productsCacheTime = null;
-      _cachedFoodItems = null;
-      _foodItemsCacheTime = null;
+      _clearFoodCaches();
       
       return true;
     } catch (e) {
@@ -472,52 +566,71 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
   }
 
   // ============================================
-  // 🔥 КЭШИРОВАНИЕ СПИСКА ЕДЫ (продукты + рецепты)
+  // СПИСОК ЕДЫ (продукты + рецепты)
   // ============================================
   Future<List<dynamic>> getAllFoodItems(String query) async {
     try {
       final uid = userId;
       if (uid == null) return [];
 
-      //  Проверяем кэш (если запрос пустой и кэш свежий)
+      List<Product> products;
       if (query.isEmpty && 
-          _cachedFoodItems != null && 
-          _foodItemsCacheTime != null &&
-          DateTime.now().difference(_foodItemsCacheTime!) < _foodCacheDuration) {
-        debugPrint('📦 Using cached food items (${_cachedFoodItems!.length} items)');
-        return _cachedFoodItems!;
+          _cachedProducts != null && 
+          _productsCacheTime != null &&
+          DateTime.now().difference(_productsCacheTime!) < _cacheDuration) {
+        debugPrint('📦 Using cached products');
+        products = _cachedProducts!;
+      } else {
+        debugPrint('🌐 Fetching products from network...');
+        var productsQuery = SupabaseConfig.client
+            .from('products')
+            .select('id,name,calories,protein,fat,carbs,user_id');
+        if (query.isNotEmpty) {
+          productsQuery = productsQuery.ilike('name', '%$query%');
+        }
+        final productsResponse = await retryRequest(() => productsQuery
+            .or('user_id.is.null,user_id.eq.$uid')
+            .limit(50));
+        products = productsResponse.map((j) => Product.fromJson(j)).toList();
+        
+        if (query.isEmpty) {
+          _cachedProducts = products;
+          _productsCacheTime = DateTime.now();
+        }
       }
 
-      debugPrint('🌐 Fetching products from network...');
-      var productsQuery = SupabaseConfig.client
-          .from('products')
-          .select('id,name,calories,protein,fat,carbs,user_id');
-      if (query.isNotEmpty) {
-        productsQuery = productsQuery.ilike('name', '%$query%');
-      }
-      final productsResponse = await retryRequest(() => productsQuery
-          .or('user_id.is.null,user_id.eq.$uid')
-          .limit(50));
-      final products = productsResponse.map((j) => Product.fromJson(j)).toList();
-
-      debugPrint('🌐 Fetching recipes from network...');
-      var recipesQuery = SupabaseConfig.client.from('recipes').select(
-          'id,name,description,base_weight_grams,total_calories,total_protein,total_fat,total_carbs,created_by,recipe_products(amount_grams,product_id,products(id,name,calories,protein,fat,carbs,user_id))');
-      if (query.isNotEmpty) {
-        recipesQuery = recipesQuery.ilike('name', '%$query%');
-      }
-      final recipesResponse = await retryRequest(() => recipesQuery
-          .or('created_by.is.null,created_by.eq.$uid')
-          .limit(50));
-      final recipes = recipesResponse.map((j) {
-        final ingredients = (j['recipe_products'] as List? ?? []).map((rp) {
-          return RecipeIngredient(
-            product: Product.fromJson(rp['products']),
-            amountGrams: (rp['amount_grams'] as num).toDouble(),
-          );
+      List<Recipe> recipes;
+      if (query.isEmpty && 
+          _cachedRecipes != null && 
+          _recipesCacheTime != null &&
+          DateTime.now().difference(_recipesCacheTime!) < _cacheDuration) {
+        debugPrint('📦 Using cached recipes');
+        recipes = _cachedRecipes!;
+      } else {
+        debugPrint('🌐 Fetching recipes from network...');
+        var recipesQuery = SupabaseConfig.client.from('recipes').select(
+            'id,name,description,base_weight_grams,total_calories,total_protein,total_fat,total_carbs,created_by,recipe_products(amount_grams,product_id,products(id,name,calories,protein,fat,carbs,user_id))');
+        if (query.isNotEmpty) {
+          recipesQuery = recipesQuery.ilike('name', '%$query%');
+        }
+        final recipesResponse = await retryRequest(() => recipesQuery
+            .or('created_by.is.null,created_by.eq.$uid')
+            .limit(50));
+        recipes = recipesResponse.map((j) {
+          final ingredients = (j['recipe_products'] as List? ?? []).map((rp) {
+            return RecipeIngredient(
+              product: Product.fromJson(rp['products']),
+              amountGrams: (rp['amount_grams'] as num).toDouble(),
+            );
+          }).toList();
+          return Recipe.fromJson(j, ingredients);
         }).toList();
-        return Recipe.fromJson(j, ingredients);
-      }).toList();
+        
+        if (query.isEmpty) {
+          _cachedRecipes = recipes;
+          _recipesCacheTime = DateTime.now();
+        }
+      }
 
       final all = [...products, ...recipes];
       all.sort((a, b) {
@@ -525,14 +638,6 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         final nameB = b is Product ? b.name : (b is Recipe ? b.name : '');
         return nameA.toLowerCase().compareTo(nameB.toLowerCase());
       });
-      
-      // 🔥 Сохраняем в кэш (только если запрос пустой - полный список)
-      if (query.isEmpty) {
-        _cachedFoodItems = all;
-        _foodItemsCacheTime = DateTime.now();
-        debugPrint('💾 Cached ${all.length} food items');
-      }
-      
       return all;
     } catch (e) {
       debugPrint('❌ Get all food items error: $e');
@@ -602,11 +707,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
             ));
       }
 
-      // 🔥 Очищаем кэш рецептов и food items после создания
-      _cachedRecipes = null;
-      _recipesCacheTime = null;
-      _cachedFoodItems = null;
-      _foodItemsCacheTime = null;
+      _clearFoodCaches();
 
       return Recipe(
         id: recipeId,
@@ -628,6 +729,9 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     }
   }
 
+  // ============================================
+  // ДОБАВЛЕНИЕ ПРОДУКТА В ПРИЁМ ПИЩИ
+  // ============================================
   Future<bool> _addMealItemCore({
     required MealType type,
     required String productName,
@@ -647,7 +751,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     try {
       debugPrint('🔵 _addMealItemCore: type=$type, product=$productName');
 
-      debugPrint(' Searching for existing meal...');
+      debugPrint('📝 Searching for existing meal...');
       final existingMeal = await retryRequest(() => SupabaseConfig.client
           .from('meals')
           .select('id')
@@ -710,6 +814,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
 
       debugPrint('✅ Meal item inserted successfully');
 
+      // Обновляем UI сразу
       final newMeal = Meal(
         id: _uuid.v4(),
         name: productName,
@@ -736,17 +841,15 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       }
       notifyListeners();
 
-      _cachedMeals = null;
-      _mealsDataCacheTime = null;
-      _cachedGoals = null;
-      _goalsCacheTime = null;
+      // Инвалидируем кэш meals после добавления
+      _clearMealsCaches();
 
       _scheduleSummaryUpdate(uid, dateStr);
 
       return true;
     } catch (e, stackTrace) {
       debugPrint('❌ _addMealItemCore error: $e');
-      debugPrint(' Stack trace: $stackTrace');
+      debugPrint('❌ Stack trace: $stackTrace');
       rethrow;
     }
   }
@@ -816,7 +919,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         itemName = item.name;
         productId = item.id;
         recipeId = null;
-        debugPrint(' Adding Product: ${item.name} (${item.id})');
+        debugPrint('🟢 Adding Product: ${item.name} (${item.id})');
       } else if (item is Recipe) {
         double scale = portionGrams / item.baseWeightGrams;
         cal = (item.totalCalories * scale).round();
@@ -897,8 +1000,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
             .eq('id', existing['id'] as String);
       }
       
-      _cachedMeals = null;
-      _mealsDataCacheTime = null;
+      _clearMealsCaches();
       
       return true;
     } catch (e) {
@@ -946,7 +1048,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       final uid = userId;
       if (uid == null || uid.isEmpty) throw Exception('Не авторизован');
 
-      final items = await SupabaseConfig.client
+      await SupabaseConfig.client
           .from('meal_items')
           .select('calories, protein, fat, carbs')
           .eq('meal_id', mealId);
@@ -966,10 +1068,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
 
       _mealsCacheTime[type] = null;
       
-      _cachedMeals = null;
-      _mealsDataCacheTime = null;
-      _cachedGoals = null;
-      _goalsCacheTime = null;
+      _clearMealsCaches();
       
       await _loadGoalsOnly(_date, force: true);
       await _loadMealsOfType(type, _date, force: true);

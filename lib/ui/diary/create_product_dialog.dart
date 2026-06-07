@@ -91,7 +91,11 @@ void showCreateProductDialog({
             Row(children: [
               Expanded(
                 child: TextButton(
-                  onPressed: () => Navigator.of(dialogContext).pop(),
+                  onPressed: () {
+                    if (dialogContext.mounted) {
+                      Navigator.of(dialogContext).pop();
+                    }
+                  },
                   style: TextButton.styleFrom(
                       padding: const EdgeInsets.symmetric(vertical: 14)),
                   child: Text('Отмена',
@@ -105,11 +109,11 @@ void showCreateProductDialog({
                   onPressed: () async {
                     final name = nameCtrl.text.trim();
                     if (name.isEmpty) {
-                      ErrorHandler.showGlobal('Введите название продукта');
+                      ErrorHandler.show(dialogContext, 'Введите название продукта');
                       return;
                     }
                     if (name.length < 2) {
-                      ErrorHandler.showGlobal(
+                      ErrorHandler.show(dialogContext,
                           'Название должно быть не менее 2 символов');
                       return;
                     }
@@ -123,7 +127,7 @@ void showCreateProductDialog({
                         protein < 0 ||
                         fat < 0 ||
                         carbs < 0) {
-                      ErrorHandler.showGlobal(
+                      ErrorHandler.show(dialogContext,
                           'Значения не могут быть отрицательными');
                       return;
                     }
@@ -139,21 +143,16 @@ void showCreateProductDialog({
 
                       if (!dialogContext.mounted) return;
 
+                      // 🔥 Закрываем диалог
+                      Navigator.of(dialogContext).pop();
+
                       if (newP != null) {
-                        Navigator.of(dialogContext).pop();
-                        Future.microtask(() {
-                          if (ctx.mounted) {
-                            openPortionSelector(ctx, type, newP, diaryService);
-                            ErrorHandler.showSuccessGlobal('Продукт создан');
-                          }
-                        });
-                      } else {
-                        ErrorHandler.showGlobal(
-                            'Не удалось создать продукт. Попробуйте снова');
+                        // 🔥 Показываем простое уведомление
+                        ErrorHandler.showSuccessGlobal('Продукт создан');
                       }
                     } catch (e) {
                       if (!dialogContext.mounted) return;
-                      ErrorHandler.showGlobal(
+                      ErrorHandler.show(dialogContext,
                           ErrorHandler.format(e, context: 'product'));
                     }
                   },
@@ -174,11 +173,5 @@ void showCreateProductDialog({
         ),
       ),
     ),
-  ).then((_) {
-    nameCtrl.dispose();
-    calCtrl.dispose();
-    proCtrl.dispose();
-    fatCtrl.dispose();
-    carbCtrl.dispose();
-  });
+  );
 }

@@ -16,7 +16,6 @@ void showFoodSearchSheet({
 }) {
   final diaryService = ctx.read<DiaryService>();
 
-  // 🔥 Создаём StatefulBuilder для управления контроллером
   showModalBottomSheet(
     context: ctx,
     backgroundColor: AppColors.background,
@@ -49,11 +48,15 @@ class _FoodSearchContent extends StatefulWidget {
 
 class _FoodSearchContentState extends State<_FoodSearchContent> {
   late final SafeTextEditingController _searchCtrl;
+  late Future<List<dynamic>> _searchFuture;
+  String _lastQuery = '';
 
   @override
   void initState() {
     super.initState();
     _searchCtrl = SafeTextEditingController();
+    // 🔥 Инициализируем Future ОДИН РАЗ при создании виджета
+    _searchFuture = widget.diaryService.getAllFoodItems('');
   }
 
   @override
@@ -63,12 +66,10 @@ class _FoodSearchContentState extends State<_FoodSearchContent> {
   }
 
   void _openPortionSelector(dynamic item) {
-    // 🔥 Закрываем модалку поиска
     if (mounted && widget.sheetContext.mounted) {
       Navigator.of(widget.sheetContext).pop();
     }
     
-    // 🔥 Открываем PortionSelector с задержкой
     Future.delayed(const Duration(milliseconds: 200), () {
       if (widget.ctx.mounted) {
         showModalBottomSheet(
@@ -93,17 +94,22 @@ class _FoodSearchContentState extends State<_FoodSearchContent> {
     });
   }
 
+  void _onSearchChanged(String query) {
+    // 🔥 Пересоздаём Future только если запрос изменился
+    if (query != _lastQuery) {
+      _lastQuery = query;
+      setState(() {
+        _searchFuture = widget.diaryService.getAllFoodItems(query);
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return StatefulBuilder(
       builder: (context, setModalState) {
         return FutureBuilder<List<dynamic>>(
-          future: widget.diaryService
-              .getAllFoodItems(_searchCtrl.text)
-              .catchError((e) {
-                debugPrint('❌ Search error: $e');
-                return <dynamic>[];
-              }),
+          future: _searchFuture,
           builder: (ctx, snapshot) {
             if (snapshot.hasError) {
               return Center(
@@ -120,7 +126,12 @@ class _FoodSearchContentState extends State<_FoodSearchContent> {
                     ),
                     const SizedBox(height: 16),
                     ElevatedButton(
-                      onPressed: () => setModalState(() {}),
+                      onPressed: () {
+                        setState(() {
+                          _searchFuture = widget.diaryService
+                              .getAllFoodItems(_searchCtrl.text);
+                        });
+                      },
                       child: const Text('Повторить'),
                     ),
                   ],
@@ -146,7 +157,7 @@ class _FoodSearchContentState extends State<_FoodSearchContent> {
                               const EdgeInsets.symmetric(horizontal: 12),
                           child: TextField(
                             controller: _searchCtrl,
-                            onChanged: (_) => setModalState(() {}),
+                            onChanged: _onSearchChanged,
                             style:
                                 TextStyle(color: AppColors.textPrimary),
                             decoration: InputDecoration(
