@@ -34,31 +34,23 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
   bool _loading = false;
   bool _loadingGoals = false;
   String? _error;
-  
+
   Timer? _summaryUpdateTimer;
 
-  // ============================================
-  // КЭШИ
-  // ============================================
-  
-  // Кэши для продуктов и рецептов
   List<Product>? _cachedProducts;
   DateTime? _productsCacheTime;
   List<Recipe>? _cachedRecipes;
   DateTime? _recipesCacheTime;
-  
-  // Кэши для дневника (meals и goals)
+
   Map<MealType, List<Meal>>? _cachedMeals;
   DateTime? _mealsDataCacheTime;
   DailyGoals? _cachedGoals;
   DateTime? _goalsCacheTime;
-  
-  // Флаг предзагрузки списка еды
+
   bool _isFoodPreloaded = false;
   bool get isFoodPreloaded => _isFoodPreloaded;
-  
+
   static const Duration _cacheDuration = Duration(minutes: 2);
-  static const Duration _foodCacheDuration = Duration(minutes: 5);
 
   DiaryService(this.clientsService) {
     clientsService.addListener(onClientChanged);
@@ -83,9 +75,6 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     refresh();
   }
 
-  // ============================================
-  // ОЧИСТКА КЭШЕЙ
-  // ============================================
   void _clearAllCaches() {
     _cachedProducts = null;
     _productsCacheTime = null;
@@ -113,9 +102,6 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     _goalsCacheTime = null;
   }
 
-  // ============================================
-  // GETTERS
-  // ============================================
   DailyGoals? get goals => _goals;
   Map<MealType, List<Meal>> get meals => _meals;
   Map<MealType, bool> get expanded => _expanded;
@@ -124,31 +110,23 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
   bool get loadingGoals => _loadingGoals;
   String? get error => _error;
 
-  // ============================================
-  // ПРЕДЗАГРУЗКА ДАННЫХ
-  // ============================================
-  
-  /// Предзагрузка списка еды в фоне
-  /// Вызывается при открытии дневника, чтобы при открытии поиска
-  /// данные уже были в кэше
   Future<void> preloadFoodItems() async {
     if (_isFoodPreloaded) {
       debugPrint('📦 Food items already preloaded');
       return;
     }
-    
+
     final uid = userId;
     if (uid == null || uid.isEmpty) return;
-    
+
     debugPrint('🚀 Preloading food items in background...');
-    
+
     try {
-      // Загружаем параллельно продукты и рецепты
       await Future.wait([
         getProducts(''),
         _preloadRecipes(),
       ]);
-      
+
       _isFoodPreloaded = true;
       debugPrint('✅ Food items preloaded successfully');
     } catch (e) {
@@ -160,19 +138,18 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     try {
       final uid = userId;
       if (uid == null) return;
-      
-      if (_cachedRecipes != null && 
+
+      if (_cachedRecipes != null &&
           _recipesCacheTime != null &&
           DateTime.now().difference(_recipesCacheTime!) < _cacheDuration) {
         return;
       }
-      
-      final recipesResponse = await retryRequest(() => 
-        SupabaseConfig.client.from('recipes').select(
-          'id,name,description,base_weight_grams,total_calories,total_protein,total_fat,total_carbs,created_by,recipe_products(amount_grams,product_id,products(id,name,calories,protein,fat,carbs,user_id))'
-        ).or('created_by.is.null,created_by.eq.$uid').limit(50)
-      );
-      
+
+      final recipesResponse = await retryRequest(() =>
+          SupabaseConfig.client.from('recipes').select(
+              'id,name,description,base_weight_grams,total_calories,total_protein,total_fat,total_carbs,created_by,recipe_products(amount_grams,product_id,products(id,name,calories,protein,fat,carbs,user_id))').or(
+              'created_by.is.null,created_by.eq.$uid').limit(50));
+
       _cachedRecipes = recipesResponse.map((j) {
         final ingredients = (j['recipe_products'] as List? ?? []).map((rp) {
           return RecipeIngredient(
@@ -182,7 +159,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         }).toList();
         return Recipe.fromJson(j, ingredients);
       }).toList();
-      
+
       _recipesCacheTime = DateTime.now();
       debugPrint('💾 Preloaded ${_cachedRecipes!.length} recipes');
     } catch (e) {
@@ -191,19 +168,18 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
   }
 
   // ============================================
-  // ЗАГРУЗКА GOALS
+  // 🔥 ЗАГРУЗКА ЦЕЛЕЙ (для конкретной даты)
   // ============================================
   Future<void> _loadGoalsOnly(DateTime d, {bool force = false}) async {
     final uid = userId;
     if (uid == null || uid.isEmpty) return;
     final ds = d.toIso8601String().split('T')[0];
 
-    // Проверяем кэш (если не force и кэш свежий)
-    if (!force && 
-        _cachedGoals != null && 
+    if (!force &&
+        _cachedGoals != null &&
         _goalsCacheTime != null &&
         DateTime.now().difference(_goalsCacheTime!) < _cacheDuration) {
-      debugPrint('📦 Using cached goals');
+      debugPrint(' Using cached goals');
       _goals = _cachedGoals;
       return;
     }
@@ -217,47 +193,44 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
             .eq('user_id', uid)
             .eq('date', ds)
             .maybeSingle()),
+        // 🔥 Загружаем цели для конкретной даты из user_goals
         retryRequest(() => SupabaseConfig.client
             .from('user_goals')
             .select('protein_target, fat_target, carbs_target, calories_target')
             .eq('user_id', uid)
-            .eq('is_active', true)
+            .eq('date', ds)
             .maybeSingle()),
       ]);
-      
+
       _goals = DailyGoals(
-        proteinTarget: toIntSafe(gol?['protein_target'], defaultValue: 100),
-        fatsTarget: toIntSafe(gol?['fat_target'], defaultValue: 65),
-        carbsTarget: toIntSafe(gol?['carbs_target'], defaultValue: 285),
-        caloriesTarget: toIntSafe(gol?['calories_target'], defaultValue: 2500),
+        proteinTarget: toIntSafe(gol?['protein_target'], defaultValue: 0),
+        fatsTarget: toIntSafe(gol?['fat_target'], defaultValue: 0),
+        carbsTarget: toIntSafe(gol?['carbs_target'], defaultValue: 0),
+        caloriesTarget: toIntSafe(gol?['calories_target'], defaultValue: 0),
         proteinCurrent: toIntSafe(sum?['protein_actual']),
         fatsCurrent: toIntSafe(sum?['fat_actual']),
         carbsCurrent: toIntSafe(sum?['carbs_actual']),
         caloriesCurrent: toIntSafe(sum?['calories_actual']),
       );
-      
-      // Сохраняем в кэш
+
       _cachedGoals = _goals;
       _goalsCacheTime = DateTime.now();
-      debugPrint('💾 Cached goals');
+      debugPrint(' Cached goals for $ds');
     } catch (e) {
       debugPrint('❌ Goals load error: $e');
       _goals = const DailyGoals.empty();
     }
   }
 
-  // ============================================
-  // ЗАГРУЗКА MEALS С ГРУППИРОВКОЙ
-  // ============================================
-  Future<void> _loadMealsOfType(MealType type, DateTime d, {bool force = false}) async {
+  Future<void> _loadMealsOfType(MealType type, DateTime d,
+      {bool force = false}) async {
     _mealsCacheTime[type] = null;
     final uid = userId;
     if (uid == null || uid.isEmpty) return;
     final ds = d.toIso8601String().split('T')[0];
 
-    // Проверяем кэш (если не force и кэш свежий)
-    if (!force && 
-        _cachedMeals != null && 
+    if (!force &&
+        _cachedMeals != null &&
         _mealsDataCacheTime != null &&
         DateTime.now().difference(_mealsDataCacheTime!) < _cacheDuration) {
       debugPrint('📦 Using cached meals for $type');
@@ -267,7 +240,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
 
     try {
       debugPrint('🌐 Loading meals for type=$type, date=$ds from network...');
-      
+
       final mealsData = await retryRequest(() => SupabaseConfig.client
           .from('meals')
           .select(
@@ -279,11 +252,10 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
 
       debugPrint('📦 Got ${mealsData.length} meals');
 
-      // Собираем все meal_items из всех meals этого типа
       final List<Map<String, dynamic>> allItems = [];
       String? comment;
       DateTime? eatenAt;
-      
+
       for (var j in mealsData) {
         final items = j['meal_items'] as List? ?? [];
         if (j['comment'] != null && j['comment'].toString().isNotEmpty) {
@@ -292,7 +264,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         if (eatenAt == null && j['eaten_at'] != null) {
           eatenAt = DateTime.parse(j['eaten_at'] as String);
         }
-        
+
         for (var it in items) {
           allItems.add({
             'id': it['id'],
@@ -314,34 +286,40 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
           _typeComments[type] = comment;
         }
         _meals[type] = [];
-        
-        // Обновляем кэш
+
         _cachedMeals ??= {};
         _cachedMeals![type] = [];
         _mealsDataCacheTime = DateTime.now();
         return;
       }
 
-      // ГРУППИРОВКА: объединяем одинаковые продукты по product_id или recipe_id
       final Map<String, Map<String, dynamic>> groupedItems = {};
-      
+
       for (var it in allItems) {
         final productId = it['product_id'] as String?;
         final recipeId = it['recipe_id'] as String?;
-        
-        // Ключ для группировки: product_id или recipe_id
-        final key = productId ?? (recipeId != null ? 'recipe_$recipeId' : 'item_${it['id']}');
-        
+
+        final key = productId ??
+            (recipeId != null ? 'recipe_$recipeId' : 'item_${it['id']}');
+
         if (groupedItems.containsKey(key)) {
-          // Если продукт уже есть — суммируем значения
           final existing = groupedItems[key]!;
-          existing['amount_grams'] = toIntSafe(existing['amount_grams']) + toIntSafe(it['amount_grams']);
-          existing['calories'] = toIntSafe(existing['calories']) + toIntSafe(it['calories']);
-          existing['protein'] = toIntSafe(existing['protein']) + toIntSafe(it['protein']);
-          existing['fat'] = toIntSafe(existing['fat']) + toIntSafe(it['fat']);
-          existing['carbs'] = toIntSafe(existing['carbs']) + toIntSafe(it['carbs']);
+          existing['amount_grams'] =
+              toIntSafe(existing['amount_grams']) + toIntSafe(it['amount_grams']);
+          existing['calories'] =
+              toIntSafe(existing['calories']) + toIntSafe(it['calories']);
+          existing['protein'] =
+              toIntSafe(existing['protein']) + toIntSafe(it['protein']);
+          existing['fat'] =
+              toIntSafe(existing['fat']) + toIntSafe(it['fat']);
+          existing['carbs'] =
+              toIntSafe(existing['carbs']) + toIntSafe(it['carbs']);
+
+          final existingIds =
+              (existing['meal_item_ids'] as List<String>? ?? []);
+          existingIds.add(it['id'] as String);
+          existing['meal_item_ids'] = existingIds;
         } else {
-          // Новый продукт — добавляем как есть
           groupedItems[key] = {
             'id': it['id'],
             'amount_grams': it['amount_grams'],
@@ -353,17 +331,17 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
             'carbs': it['carbs'],
             'products': it['products'],
             'recipes': it['recipes'],
+            'meal_item_ids': [it['id'] as String],
           };
         }
       }
 
-      // Создаём отдельный Meal для каждой группы продуктов
       final List<Meal> meals = [];
-      
+
       for (var it in groupedItems.values) {
         String? nm;
         bool isRecipe = false;
-        
+
         final productsRaw = it['products'];
         if (productsRaw is List && productsRaw.isNotEmpty) {
           nm = (productsRaw[0] as Map?)?['name'] as String?;
@@ -372,18 +350,18 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
           nm = productsRaw['name'] as String?;
           isRecipe = false;
         }
-        
+
         if (nm == null) {
           final recipesRaw = it['recipes'];
           if (recipesRaw is List && recipesRaw.isNotEmpty) {
-            nm = '🍳 ${(recipesRaw[0] as Map?)?['name'] as String?}';
+            nm = ' ${(recipesRaw[0] as Map?)?['name'] as String?}';
             isRecipe = true;
           } else if (recipesRaw is Map) {
             nm = '🍳 ${recipesRaw['name'] as String?}';
             isRecipe = true;
           }
         }
-        
+
         meals.add(Meal(
           id: _uuid.v4(),
           name: nm ?? 'Блюдо',
@@ -396,16 +374,16 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
           createdAt: eatenAt ?? DateTime.now(),
           comment: comment,
           isRecipe: isRecipe,
+          mealItemIds: (it['meal_item_ids'] as List<String>?) ?? [],
         ));
       }
-      
+
       _meals[type] = meals;
-      
-      // Обновляем кэш
+
       _cachedMeals ??= {};
       _cachedMeals![type] = meals;
       _mealsDataCacheTime = DateTime.now();
-      
+
       debugPrint('✅ Loaded and cached ${meals.length} meals for $type');
     } catch (e, stackTrace) {
       debugPrint('❌ Meals load error ($type): $e');
@@ -413,16 +391,16 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     }
   }
 
-  Future<void> load(DateTime d, {MealType? loadMealsOfType, bool force = false}) async {
+  Future<void> load(DateTime d,
+      {MealType? loadMealsOfType, bool force = false}) async {
     _date = d;
-    
-    // Если кэш устарел — сбрасываем его
-    if (_mealsDataCacheTime != null && 
+
+    if (_mealsDataCacheTime != null &&
         DateTime.now().difference(_mealsDataCacheTime!) > _cacheDuration) {
       debugPrint('🗑️ Meals cache expired, clearing...');
       _clearMealsCaches();
     }
-    
+
     if (shouldReload(force: force)) {
       for (var t in MealType.values) {
         _mealsCacheTime[t] = null;
@@ -443,7 +421,8 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       notifyListeners();
       try {
         if (force) {
-          await Future.wait(MealType.values.map((t) => _loadMealsOfType(t, d, force: force)));
+          await Future.wait(MealType.values
+              .map((t) => _loadMealsOfType(t, d, force: force)));
         } else if (loadMealsOfType != null) {
           await _loadMealsOfType(loadMealsOfType, d, force: force);
         }
@@ -460,38 +439,38 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     _loadMealsOfType(type, _date).then((_) => notifyListeners());
   }
 
-  // ============================================
-  // ПРОДУКТЫ
-  // ============================================
   Future<List<Product>> getProducts(String query) async {
     try {
-      if (query.isEmpty && 
-          _cachedProducts != null && 
+      if (query.isEmpty &&
+          _cachedProducts != null &&
           _productsCacheTime != null &&
           DateTime.now().difference(_productsCacheTime!) < _cacheDuration) {
-        debugPrint('📦 Using cached products (${_cachedProducts!.length} items)');
+        debugPrint(
+            '📦 Using cached products (${_cachedProducts!.length} items)');
         return _cachedProducts!;
       }
 
-      var q = SupabaseConfig.client.from('products').select('id,name,calories,protein,fat,carbs,user_id');
+      var q = SupabaseConfig.client
+          .from('products')
+          .select('id,name,calories,protein,fat,carbs,user_id');
       if (query.isNotEmpty) {
         q = q.ilike('name', '%$query%');
       }
       final uid = userId;
       if (uid == null) return [];
-      
+
       debugPrint('🌐 Fetching products from network...');
       final response = await retryRequest(() =>
           q.or('user_id.is.null,user_id.eq.$uid').limit(50));
-      
+
       final products = response.map((j) => Product.fromJson(j)).toList();
-      
+
       if (query.isEmpty) {
         _cachedProducts = products;
         _productsCacheTime = DateTime.now();
         debugPrint('💾 Cached ${products.length} products');
       }
-      
+
       return products;
     } catch (e) {
       debugPrint('❌ Get products error: $e');
@@ -513,11 +492,11 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
             'carbs': carb,
             'user_id': uid,
           }).select('id,name,calories,protein,fat,carbs,user_id').single());
-      
+
       final product = Product.fromJson(res);
-      
+
       _clearFoodCaches();
-      
+
       return product;
     } catch (e) {
       debugPrint('❌ Create product error: $e');
@@ -535,15 +514,15 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
   }) async {
     try {
       await retryRequest(() => SupabaseConfig.client.from('products').update({
-        'name': name,
-        'calories': cal,
-        'protein': pro,
-        'fat': fat,
-        'carbs': carb,
-      }).eq('id', id));
-      
+            'name': name,
+            'calories': cal,
+            'protein': pro,
+            'fat': fat,
+            'carbs': carb,
+          }).eq('id', id));
+
       _clearFoodCaches();
-      
+
       return true;
     } catch (e) {
       debugPrint('❌ Update product error: $e');
@@ -553,11 +532,13 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
 
   Future<bool> deleteProduct(String productId) async {
     try {
-      await retryRequest(() =>
-          SupabaseConfig.client.from('products').delete().eq('id', productId));
-      
+      await retryRequest(() => SupabaseConfig.client
+          .from('products')
+          .delete()
+          .eq('id', productId));
+
       _clearFoodCaches();
-      
+
       return true;
     } catch (e) {
       debugPrint('❌ Delete product error: $e');
@@ -565,17 +546,14 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     }
   }
 
-  // ============================================
-  // СПИСОК ЕДЫ (продукты + рецепты)
-  // ============================================
   Future<List<dynamic>> getAllFoodItems(String query) async {
     try {
       final uid = userId;
       if (uid == null) return [];
 
       List<Product> products;
-      if (query.isEmpty && 
-          _cachedProducts != null && 
+      if (query.isEmpty &&
+          _cachedProducts != null &&
           _productsCacheTime != null &&
           DateTime.now().difference(_productsCacheTime!) < _cacheDuration) {
         debugPrint('📦 Using cached products');
@@ -592,7 +570,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
             .or('user_id.is.null,user_id.eq.$uid')
             .limit(50));
         products = productsResponse.map((j) => Product.fromJson(j)).toList();
-        
+
         if (query.isEmpty) {
           _cachedProducts = products;
           _productsCacheTime = DateTime.now();
@@ -600,8 +578,8 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       }
 
       List<Recipe> recipes;
-      if (query.isEmpty && 
-          _cachedRecipes != null && 
+      if (query.isEmpty &&
+          _cachedRecipes != null &&
           _recipesCacheTime != null &&
           DateTime.now().difference(_recipesCacheTime!) < _cacheDuration) {
         debugPrint('📦 Using cached recipes');
@@ -625,7 +603,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
           }).toList();
           return Recipe.fromJson(j, ingredients);
         }).toList();
-        
+
         if (query.isEmpty) {
           _cachedRecipes = recipes;
           _recipesCacheTime = DateTime.now();
@@ -722,16 +700,101 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         ingredients: ingredients,
       );
     } catch (e) {
-      debugPrint('❌ Create recipe error: $e');
+      debugPrint(' Create recipe error: $e');
       _error = ErrorHandler.format(e, context: 'recipe');
       notifyListeners();
       return null;
     }
   }
 
-  // ============================================
-  // ДОБАВЛЕНИЕ ПРОДУКТА В ПРИЁМ ПИЩИ
-  // ============================================
+  Future<bool> deleteRecipe(String recipeId) async {
+    try {
+      final uid = userId;
+      if (uid == null) return false;
+
+      debugPrint('🗑️ Deleting recipe: $recipeId');
+
+      await retryRequest(() => SupabaseConfig.client
+          .from('recipe_products')
+          .delete()
+          .eq('recipe_id', recipeId));
+
+      await retryRequest(() => SupabaseConfig.client
+          .from('recipes')
+          .delete()
+          .eq('id', recipeId)
+          .eq('created_by', uid));
+
+      _clearFoodCaches();
+      debugPrint('✅ Recipe deleted successfully');
+      return true;
+    } catch (e) {
+      debugPrint(' Delete recipe error: $e');
+      return false;
+    }
+  }
+
+  Future<bool> updateRecipe({
+    required String id,
+    required String name,
+    String description = '',
+    required List<RecipeIngredient> ingredients,
+  }) async {
+    try {
+      final uid = userId;
+      if (uid == null) return false;
+
+      double baseWeight = 0;
+      double totalCal = 0;
+      double totalPro = 0;
+      double totalFat = 0;
+      double totalCarb = 0;
+
+      for (var ing in ingredients) {
+        baseWeight += ing.amountGrams;
+        double ratio = ing.amountGrams / 100.0;
+        totalCal += ing.product.calories * ratio;
+        totalPro += ing.product.protein * ratio;
+        totalFat += ing.product.fat * ratio;
+        totalCarb += ing.product.carbs * ratio;
+      }
+
+      await retryRequest(() => SupabaseConfig.client.from('recipes').update({
+            'name': name,
+            'description': description,
+            'base_weight_grams': baseWeight,
+            'total_calories': totalCal,
+            'total_protein': totalPro,
+            'total_fat': totalFat,
+            'total_carbs': totalCarb,
+          }).eq('id', id).eq('created_by', uid));
+
+      await retryRequest(() => SupabaseConfig.client
+          .from('recipe_products')
+          .delete()
+          .eq('recipe_id', id));
+
+      if (ingredients.isNotEmpty) {
+        await retryRequest(() => SupabaseConfig.client
+            .from('recipe_products')
+            .insert(ingredients
+                .map((ing) => {
+                      'recipe_id': id,
+                      'product_id': ing.product.id,
+                      'amount_grams': ing.amountGrams,
+                    })
+                .toList()));
+      }
+
+      _clearFoodCaches();
+      debugPrint('✅ Recipe updated successfully');
+      return true;
+    } catch (e) {
+      debugPrint('❌ Update recipe error: $e');
+      return false;
+    }
+  }
+
   Future<bool> _addMealItemCore({
     required MealType type,
     required String productName,
@@ -761,7 +824,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
           .maybeSingle());
 
       String mealId;
-      
+
       if (existingMeal == null) {
         debugPrint('📝 Creating new meal...');
         final newMeal = await retryRequest(() => SupabaseConfig.client
@@ -775,13 +838,13 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
             })
             .select('id')
             .single());
-        
+
         mealId = newMeal['id'] as String;
         debugPrint('✅ New meal created: $mealId');
       } else {
         mealId = existingMeal['id'] as String;
         debugPrint('✅ Found existing meal: $mealId');
-        
+
         if (comment != null && comment.isNotEmpty) {
           await retryRequest(() => SupabaseConfig.client
               .from('meals')
@@ -798,7 +861,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         'fat': fat,
         'carbs': carbs,
       };
-      
+
       if (productId != null) {
         insertData['product_id'] = productId;
       }
@@ -808,13 +871,16 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
 
       debugPrint('📝 Inserting meal_item: $insertData');
 
-      await retryRequest(() => SupabaseConfig.client
+      final insertedItem = await retryRequest(() => SupabaseConfig.client
           .from('meal_items')
-          .insert(insertData));
+          .insert(insertData)
+          .select('id')
+          .single());
 
       debugPrint('✅ Meal item inserted successfully');
 
-      // Обновляем UI сразу
+      final newMealItemId = insertedItem['id'] as String;
+
       final newMeal = Meal(
         id: _uuid.v4(),
         name: productName,
@@ -827,6 +893,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         createdAt: DateTime.now(),
         comment: comment,
         isRecipe: recipeId != null,
+        mealItemIds: [newMealItemId],
       );
       if (_meals[type] != null) {
         _meals[type] = [..._meals[type]!, newMeal];
@@ -841,7 +908,6 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       }
       notifyListeners();
 
-      // Инвалидируем кэш meals после добавления
       _clearMealsCaches();
 
       _scheduleSummaryUpdate(uid, dateStr);
@@ -863,7 +929,8 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     });
   }
 
-  Future<void> _updateDailySummaryInBackground(String uid, String dateStr) async {
+  Future<void> _updateDailySummaryInBackground(
+      String uid, String dateStr) async {
     try {
       final meals = await retryRequest(() => SupabaseConfig.client
           .from('meals')
@@ -882,14 +949,16 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         }
       }
 
-      await retryRequest(() => SupabaseConfig.client.from('daily_summary').upsert({
-        'user_id': uid,
-        'date': dateStr,
-        'calories_actual': c,
-        'protein_actual': p,
-        'fat_actual': f,
-        'carbs_actual': cb,
-      }, onConflict: 'user_id,date'), maxAttempts: 2);
+      await retryRequest(
+          () => SupabaseConfig.client.from('daily_summary').upsert({
+                'user_id': uid,
+                'date': dateStr,
+                'calories_actual': c,
+                'protein_actual': p,
+                'fat_actual': f,
+                'carbs_actual': cb,
+              }, onConflict: 'user_id,date'),
+          maxAttempts: 2);
     } catch (e) {
       debugPrint('❌ _updateDailySummaryInBackground error: $e');
       rethrow;
@@ -947,7 +1016,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         productId: productId,
         recipeId: recipeId,
       );
-      
+
       debugPrint('✅ addFoodItemToMeal completed: $result');
       return result;
     } catch (e, stackTrace) {
@@ -966,7 +1035,8 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       final uid = userId;
       if (uid == null || uid.isEmpty) return false;
       final ds = date.toIso8601String().split('T')[0];
-      final trimmed = comment?.trim().isEmpty == true ? null : comment?.trim();
+      final trimmed =
+          comment?.trim().isEmpty == true ? null : comment?.trim();
 
       _typeComments[type] = trimmed;
       if (_meals[type]!.isNotEmpty && trimmed != null) {
@@ -999,9 +1069,9 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
             .update({'comment': trimmed})
             .eq('id', existing['id'] as String);
       }
-      
+
       _clearMealsCaches();
-      
+
       return true;
     } catch (e) {
       debugPrint('❌ updateComment error: $e');
@@ -1043,40 +1113,85 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     }
   }
 
-  Future<bool> delete(String mealId, MealType type) async {
+  Future<bool> deleteMealItem({
+    required Meal meal,
+  }) async {
     try {
       final uid = userId;
       if (uid == null || uid.isEmpty) throw Exception('Не авторизован');
 
-      await SupabaseConfig.client
-          .from('meal_items')
-          .select('calories, protein, fat, carbs')
-          .eq('meal_id', mealId);
+      debugPrint('️ Deleting meal item: ${meal.name}');
+      debugPrint('📋 Meal IDs to delete: ${meal.mealItemIds}');
 
-      await SupabaseConfig.client
-          .from('meal_items')
-          .delete()
-          .eq('meal_id', mealId);
-      await SupabaseConfig.client
-          .from('meals')
-          .delete()
-          .eq('id', mealId)
-          .eq('user_id', uid);
+      if (meal.mealItemIds.isEmpty) {
+        debugPrint('⚠️ No meal_item_ids found for ${meal.name}');
+        return false;
+      }
+
+      String? parentMealId;
+      try {
+        final firstItemData = await retryRequest(() => SupabaseConfig.client
+            .from('meal_items')
+            .select('meal_id')
+            .eq('id', meal.mealItemIds.first)
+            .maybeSingle());
+        parentMealId = firstItemData?['meal_id'] as String?;
+        debugPrint('🔍 Parent meal ID: $parentMealId');
+      } catch (e) {
+        debugPrint('⚠️ Error getting parent meal ID: $e');
+      }
+
+      for (final itemId in meal.mealItemIds) {
+        try {
+          debugPrint('🗑️ Deleting meal_item: $itemId');
+          await retryRequest(() => SupabaseConfig.client
+              .from('meal_items')
+              .delete()
+              .eq('id', itemId));
+          debugPrint('✅ Deleted meal_item: $itemId');
+        } catch (e) {
+          debugPrint('❌ Error deleting meal_item $itemId: $e');
+        }
+      }
+
+      if (parentMealId != null && parentMealId.isNotEmpty) {
+        try {
+          final remainingItems = await retryRequest(() => SupabaseConfig.client
+              .from('meal_items')
+              .select('id')
+              .eq('meal_id', parentMealId!)
+              .limit(1));
+
+          debugPrint(
+              '🔍 Remaining items in parent meal: ${remainingItems.length}');
+
+          if (remainingItems.isEmpty) {
+            await retryRequest(() => SupabaseConfig.client
+                .from('meals')
+                .delete()
+                .eq('id', parentMealId!)
+                .eq('user_id', uid));
+            debugPrint('✅ Deleted empty parent meal: $parentMealId');
+          }
+        } catch (e) {
+          debugPrint('⚠️ Error checking/removing parent meal: $e');
+        }
+      }
 
       final ds = _date.toIso8601String().split('T')[0];
       await _updateDailySummaryInBackground(uid, ds);
 
-      _mealsCacheTime[type] = null;
-      
       _clearMealsCaches();
-      
+
       await _loadGoalsOnly(_date, force: true);
-      await _loadMealsOfType(type, _date, force: true);
+      await _loadMealsOfType(meal.mealType, _date, force: true);
 
       notifyListeners();
+      debugPrint('✅ Meal item deleted successfully');
       return true;
-    } catch (e) {
-      debugPrint('❌ Delete error: $e');
+    } catch (e, stackTrace) {
+      debugPrint('❌ Delete meal item error: $e');
+      debugPrint('❌ Stack trace: $stackTrace');
       return false;
     }
   }
@@ -1087,5 +1202,50 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       ensureMealsLoaded(t);
     }
     notifyListeners();
+  }
+
+  // ============================================
+  // 🔥 ОБНОВЛЕНИЕ ЦЕЛЕЙ (для конкретной даты)
+  // ============================================
+  Future<bool> updateGoals({
+    required int protein,
+    required int fat,
+    required int carbs,
+    required int calories,
+    DateTime? date,
+  }) async {
+    try {
+      final uid = userId;
+      if (uid == null || uid.isEmpty) return false;
+
+      final targetDate = date ?? _date;
+      final ds = targetDate.toIso8601String().split('T')[0];
+
+      debugPrint(
+          '💾 Updating goals for $ds: P=$protein F=$fat C=$carbs K=$calories');
+
+      // 🔥 Используем upsert с onConflict по (user_id, date)
+      await retryRequest(() => SupabaseConfig.client
+          .from('user_goals')
+          .upsert({
+            'user_id': uid,
+            'date': ds,
+            'protein_target': protein,
+            'fat_target': fat,
+            'carbs_target': carbs,
+            'calories_target': calories,
+            'is_active': true,
+          }, onConflict: 'user_id,date'));
+
+      // Инвалидируем кэш целей
+      _cachedGoals = null;
+      _goalsCacheTime = null;
+
+      debugPrint('✅ Goals updated successfully for $ds');
+      return true;
+    } catch (e) {
+      debugPrint('❌ Update goals error: $e');
+      return false;
+    }
   }
 }

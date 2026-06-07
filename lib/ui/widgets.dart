@@ -1,17 +1,21 @@
+import 'package:Nutrilink/core/error_handler.dart';
+import 'package:Nutrilink/data/diary_service.dart';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
+import 'package:provider/provider.dart';
+
 import '../core/config.dart';
 import '../data/models.dart';
 import 'widgets/custom_tab_icon.dart';
 
 // ==========================================
-// ✅ AUTH TEXT FIELD (Обновлён для кастомных иконок)
+// ✅ AUTH TEXT FIELD
 // ==========================================
 class AuthTextField extends StatelessWidget {
   final TextEditingController controller;
   final String label, hint;
-  final String? iconPath; // 🔥 Теперь опциональный путь к иконке
-  final IconData? fallbackIcon; // 🔥 Резервная стандартная иконка
+  final String? iconPath;
+  final IconData? fallbackIcon;
   final bool obscureText;
   final Widget? suffixIcon;
   final TextInputType? keyboardType;
@@ -22,8 +26,8 @@ class AuthTextField extends StatelessWidget {
     required this.controller,
     required this.label,
     required this.hint,
-    this.iconPath, // 🔥 Опциональный
-    this.fallbackIcon, // 🔥 Опциональный
+    this.iconPath,
+    this.fallbackIcon,
     this.obscureText = false,
     this.suffixIcon,
     this.keyboardType,
@@ -35,7 +39,8 @@ class AuthTextField extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(label,
-              style: const TextStyle(color: AppColors.textSecondary, fontSize: 14)),
+              style:
+                  const TextStyle(color: AppColors.textSecondary, fontSize: 14)),
           const SizedBox(height: 8),
           Container(
             decoration: BoxDecoration(
@@ -50,7 +55,6 @@ class AuthTextField extends StatelessWidget {
               decoration: InputDecoration(
                 hintText: hint,
                 hintStyle: const TextStyle(color: AppColors.textHint),
-                // 🔥 Используем кастомную иконку или стандартную
                 prefixIcon: iconPath != null
                     ? CustomIcon(
                         path: iconPath!,
@@ -58,11 +62,13 @@ class AuthTextField extends StatelessWidget {
                         height: 20,
                         color: AppColors.accent,
                         fallback: fallbackIcon != null
-                            ? Icon(fallbackIcon!, color: AppColors.accent, size: 20)
+                            ? Icon(fallbackIcon!,
+                                color: AppColors.accent, size: 20)
                             : null,
                       )
                     : fallbackIcon != null
-                        ? Icon(fallbackIcon, color: AppColors.accent, size: 20)
+                        ? Icon(fallbackIcon,
+                            color: AppColors.accent, size: 20)
                         : null,
                 suffixIcon: suffixIcon,
                 border: InputBorder.none,
@@ -77,12 +83,13 @@ class AuthTextField extends StatelessWidget {
 }
 
 // ==========================================
-// ✅ ROLE SELECTOR (без изменений, стандартные иконки)
+// ✅ ROLE SELECTOR
 // ==========================================
 class RoleSelector extends StatelessWidget {
   final UserRole selectedRole;
   final ValueChanged<UserRole> onChanged;
-  const RoleSelector({super.key, required this.selectedRole, required this.onChanged});
+  const RoleSelector(
+      {super.key, required this.selectedRole, required this.onChanged});
 
   @override
   Widget build(BuildContext context) => Row(
@@ -142,18 +149,23 @@ class _RoleCard extends StatelessWidget {
           child: Column(
             children: [
               Icon(icon,
-                  color: isSelected ? AppColors.accentLight : AppColors.textSecondary,
+                  color: isSelected
+                      ? AppColors.accentLight
+                      : AppColors.textSecondary,
                   size: 32),
               const SizedBox(height: 8),
               Text(title,
                   style: TextStyle(
-                    color: isSelected ? AppColors.textPrimary : AppColors.textSecondary,
+                    color: isSelected
+                        ? AppColors.textPrimary
+                        : AppColors.textSecondary,
                     fontSize: 14,
                     fontWeight: FontWeight.bold,
                   )),
               const SizedBox(height: 4),
               Text(subtitle,
-                  style: const TextStyle(color: AppColors.textHint, fontSize: 11),
+                  style:
+                      const TextStyle(color: AppColors.textHint, fontSize: 11),
                   textAlign: TextAlign.center),
             ],
           ),
@@ -162,52 +174,118 @@ class _RoleCard extends StatelessWidget {
 }
 
 // ==========================================
-// ✅ GOALS SECTION (без изменений)
+// ✅ GOALS SECTION (Обновлён: тап для редактирования + динамические цвета)
 // ==========================================
-class GoalsSection extends StatelessWidget {
-  final DailyGoals goals;
-  const GoalsSection({super.key, required this.goals});
 
-  @override
-  Widget build(BuildContext context) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Column(
-          children: [
-            const Text('Цель',
-                style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold)),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                    child: _Cell('Белки', goals.proteinCurrent, goals.proteinTarget,
-                        AppColors.progressProtein)),
-                const SizedBox(width: 6),
-                Expanded(
-                    child: _Cell('Жиры', goals.fatsCurrent, goals.fatsTarget,
-                        AppColors.progressFats)),
-                const SizedBox(width: 6),
-                Expanded(
-                    child: _Cell('Углеводы', goals.carbsCurrent, goals.carbsTarget,
-                        AppColors.progressCarbs)),
-                const SizedBox(width: 6),
-                Expanded(
-                    child: _Cell('Калории', goals.caloriesCurrent,
-                        goals.caloriesTarget, AppColors.progressCalories)),
-              ],
-            ),
-          ],
-        ),
-      );
+/// Расчёт цвета прогресса согласно ТЗ
+Color getGoalProgressColor(int current, int target) {
+  if (target <= 0) return AppColors.textHint;
+
+  final percent = (current / target) * 100;
+
+  if (percent < 20) return Colors.orange; // 10% -> Оранжевый
+  if (percent < 75) return Colors.yellow.shade700; // 50% -> Жёлтый
+  if (percent <= 110) return Colors.green; // 95%, 105% -> Зелёный
+  if (percent <= 120) return Colors.orange; // 115% -> Оранжевый
+  return Colors.red; // 125% -> Красный
 }
 
-class _Cell extends StatelessWidget {
+class GoalsSection extends StatelessWidget {
+  final DailyGoals goals;
+  final VoidCallback? onTap;
+
+  const GoalsSection({super.key, required this.goals, this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final hasGoals = goals.proteinTarget > 0 ||
+        goals.fatsTarget > 0 ||
+        goals.carbsTarget > 0 ||
+        goals.caloriesTarget > 0;
+
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        decoration: BoxDecoration(
+          color: AppColors.backgroundSecondary,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppColors.background, width: 1),
+        ),
+        child: Column(
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                const Text('Цель',
+                    style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold)),
+                Icon(Icons.edit_outlined,
+                    color: AppColors.textHint, size: 18),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (!hasGoals)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 16),
+                child: Text('Нажмите, чтобы установить цели',
+                    style: TextStyle(
+                        color: AppColors.textHint, fontSize: 13),
+                    textAlign: TextAlign.center),
+              )
+            else
+              Row(
+                children: [
+                  Expanded(
+                      child: _GoalCell(
+                    'Белки',
+                    goals.proteinCurrent,
+                    goals.proteinTarget,
+                    getGoalProgressColor(
+                        goals.proteinCurrent, goals.proteinTarget),
+                  )),
+                  const SizedBox(width: 6),
+                  Expanded(
+                      child: _GoalCell(
+                    'Жиры',
+                    goals.fatsCurrent,
+                    goals.fatsTarget,
+                    getGoalProgressColor(goals.fatsCurrent, goals.fatsTarget),
+                  )),
+                  const SizedBox(width: 6),
+                  Expanded(
+                      child: _GoalCell(
+                    'Углеводы',
+                    goals.carbsCurrent,
+                    goals.carbsTarget,
+                    getGoalProgressColor(
+                        goals.carbsCurrent, goals.carbsTarget),
+                  )),
+                  const SizedBox(width: 6),
+                  Expanded(
+                      child: _GoalCell(
+                    'Калории',
+                    goals.caloriesCurrent,
+                    goals.caloriesTarget,
+                    getGoalProgressColor(
+                        goals.caloriesCurrent, goals.caloriesTarget),
+                  )),
+                ],
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _GoalCell extends StatelessWidget {
   final String label;
   final int current, total;
   final Color color;
-  const _Cell(this.label, this.current, this.total, this.color);
+  const _GoalCell(this.label, this.current, this.total, this.color);
 
   @override
   Widget build(BuildContext context) {
@@ -215,22 +293,24 @@ class _Cell extends StatelessWidget {
     return Column(
       children: [
         Text(label,
-            style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w600),
+            style: TextStyle(
+                color: color, fontSize: 11, fontWeight: FontWeight.w600),
             maxLines: 1,
             overflow: TextOverflow.ellipsis),
         const SizedBox(height: 2),
         ClipRRect(
           borderRadius: BorderRadius.circular(3),
           child: LinearProgressIndicator(
-            value: ratio.clamp(0.0, 1.0),
-            backgroundColor: AppColors.backgroundSecondary,
+            value: total > 0 ? ratio.clamp(0.0, 1.0) : 0.0,
+            backgroundColor: AppColors.background,
             valueColor: AlwaysStoppedAnimation<Color>(color),
             minHeight: 4,
           ),
         ),
         const SizedBox(height: 4),
         Text('$current/$total',
-            style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w500),
+            style: TextStyle(
+                color: color, fontSize: 9, fontWeight: FontWeight.w500),
             maxLines: 1,
             overflow: TextOverflow.ellipsis),
       ],
@@ -239,7 +319,7 @@ class _Cell extends StatelessWidget {
 }
 
 // ==========================================
-// ✅ MEAL SECTION (без изменений, imagePath уже используется)
+// ✅ MEAL SECTION
 // ==========================================
 class MealSection extends StatelessWidget {
   final String title, imagePath;
@@ -273,7 +353,8 @@ class MealSection extends StatelessWidget {
               onTap: onExpansionChanged,
               borderRadius: BorderRadius.circular(12),
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
                 child: Row(
                   children: [
                     Container(
@@ -303,7 +384,8 @@ class MealSection extends StatelessWidget {
                               fontWeight: FontWeight.w600)),
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 6),
                       decoration: BoxDecoration(
                         color: AppColors.accent.withValues(alpha: 0.3),
                         borderRadius: BorderRadius.circular(6),
@@ -338,12 +420,17 @@ class MealSection extends StatelessWidget {
                             color: AppColors.accent,
                             borderRadius: BorderRadius.circular(6),
                           ),
-                          child: const Icon(Icons.add, color: Colors.black, size: 18),
+                          child: const Icon(Icons.add,
+                              color: Colors.black, size: 18),
                         ),
                       ),
                     const SizedBox(width: 4),
-                    Icon(isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                        color: AppColors.textSecondary, size: 20),
+                    Icon(
+                        isExpanded
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                        color: AppColors.textSecondary,
+                        size: 20),
                   ],
                 ),
               ),
@@ -351,8 +438,12 @@ class MealSection extends StatelessWidget {
             if (isExpanded) ...[
               const Divider(height: 1, color: AppColors.background),
               ...items.map((item) => Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                    child: _MealItem(meal: item),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                    child: _MealItem(
+                      meal: item,
+                      onDelete: () => _showDeleteConfirmation(context, item),
+                    ),
                   )),
             ],
           ],
@@ -366,14 +457,104 @@ class MealSection extends StatelessWidget {
         'Перекус' => Icons.cookie,
         _ => Icons.restaurant,
       };
+
+  void _showDeleteConfirmation(BuildContext context, Meal meal) {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: AppColors.background,
+        title: Text(
+          'Удалить продукт?',
+          style: TextStyle(color: AppColors.textPrimary),
+        ),
+        content: Text(
+          'Вы уверены, что хотите удалить "${meal.name}"?',
+          style: TextStyle(color: AppColors.textSecondary),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              if (dialogContext.mounted) {
+                Navigator.pop(dialogContext);
+              }
+            },
+            child: Text(
+              'Отмена',
+              style: TextStyle(color: AppColors.textHint),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              if (dialogContext.mounted) {
+                Navigator.pop(dialogContext);
+              }
+
+              final diaryService = context.read<DiaryService>();
+              final success = await diaryService.deleteMealItem(meal: meal);
+
+              if (success) {
+                ErrorHandler.showSuccessGlobal('Продукт удалён');
+                await diaryService.refresh();
+              } else {
+                ErrorHandler.showGlobal('Не удалось удалить продукт');
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _MealItem extends StatelessWidget {
   final Meal meal;
-  const _MealItem({required this.meal});
+  final VoidCallback onDelete;
+
+  const _MealItem({
+    required this.meal,
+    required this.onDelete,
+  });
 
   @override
-  Widget build(BuildContext context) => Container(
+  Widget build(BuildContext context) {
+    return Dismissible(
+      key: Key(meal.id),
+      direction: DismissDirection.endToStart,
+      confirmDismiss: (direction) async {
+        onDelete();
+        return false;
+      },
+      background: Container(
+        alignment: Alignment.centerRight,
+        padding: const EdgeInsets.only(right: 16),
+        margin: const EdgeInsets.only(top: 8),
+        decoration: BoxDecoration(
+          color: Colors.red.withValues(alpha: 0.15),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.end,
+          children: [
+            const Icon(Icons.delete_outline, color: Colors.red, size: 24),
+            const SizedBox(width: 8),
+            Text(
+              'Удалить',
+              style: TextStyle(
+                color: Colors.red,
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
+        ),
+      ),
+      child: Container(
         margin: const EdgeInsets.only(top: 8),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
@@ -388,7 +569,11 @@ class _MealItem extends StatelessWidget {
                 color: AppColors.backgroundSecondary,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Icon(Icons.restaurant, color: AppColors.textSecondary, size: 20),
+              child: Icon(
+                meal.isRecipe ? Icons.restaurant_menu : Icons.restaurant,
+                color: AppColors.textSecondary,
+                size: 20,
+              ),
             ),
             const SizedBox(width: 12),
             Expanded(
@@ -397,7 +582,8 @@ class _MealItem extends StatelessWidget {
                 children: [
                   Text(meal.name,
                       style: const TextStyle(
-                          color: AppColors.textPrimary, fontWeight: FontWeight.w500)),
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w500)),
                   Text('${meal.weight}г • ${meal.calories} ккал',
                       style: const TextStyle(
                           color: AppColors.textSecondary, fontSize: 12)),
@@ -406,11 +592,13 @@ class _MealItem extends StatelessWidget {
             ),
           ],
         ),
-      );
+      ),
+    );
+  }
 }
 
 // ==========================================
-// ✅ MEASUREMENT FIELD (без изменений)
+// ✅ MEASUREMENT FIELD
 // ==========================================
 class MeasurementField extends StatelessWidget {
   final TextEditingController controller;
@@ -432,7 +620,8 @@ class MeasurementField extends StatelessWidget {
   Widget build(BuildContext context) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(label, style: TextStyle(color: AppColors.textHint, fontSize: 12)),
+          Text(label,
+              style: TextStyle(color: AppColors.textHint, fontSize: 12)),
           const SizedBox(height: 6),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14),
@@ -442,23 +631,27 @@ class MeasurementField extends StatelessWidget {
             ),
             child: TextFormField(
               controller: controller,
-              keyboardType:
-                  keyboardType ?? const TextInputType.numberWithOptions(decimal: true),
-              style: const TextStyle(color: AppColors.textPrimary, fontSize: 15),
+              keyboardType: keyboardType ??
+                  const TextInputType.numberWithOptions(decimal: true),
+              style:
+                  const TextStyle(color: AppColors.textPrimary, fontSize: 15),
               decoration: InputDecoration(
                 hintText: hint,
                 hintStyle: TextStyle(
-                    color: AppColors.textHint.withValues(alpha: 0.4), fontSize: 15),
+                    color: AppColors.textHint.withValues(alpha: 0.4),
+                    fontSize: 15),
                 prefixIcon: Icon(icon, color: AppColors.textHint, size: 18),
                 suffixText: suffix,
-                suffixStyle: TextStyle(color: AppColors.textHint, fontSize: 12),
+                suffixStyle:
+                    TextStyle(color: AppColors.textHint, fontSize: 12),
                 border: InputBorder.none,
                 contentPadding: const EdgeInsets.symmetric(vertical: 12),
               ),
-              validator: (v) =>
-                  v != null && v.isNotEmpty && double.tryParse(v) == null
-                      ? 'Введите число'
-                      : null,
+              validator: (v) => v != null &&
+                      v.isNotEmpty &&
+                      double.tryParse(v) == null
+                  ? 'Введите число'
+                  : null,
             ),
           ),
         ],
@@ -466,7 +659,7 @@ class MeasurementField extends StatelessWidget {
 }
 
 // ==========================================
-// ✅ STATS ROW (без изменений)
+// ✅ STATS ROW
 // ==========================================
 class StatsRow extends StatelessWidget {
   final String label, value, percent;
@@ -501,7 +694,9 @@ class StatsRow extends StatelessWidget {
             Expanded(
               child: Text(label,
                   style: TextStyle(
-                      color: isTotal ? AppColors.textPrimary : AppColors.textSecondary,
+                      color: isTotal
+                          ? AppColors.textPrimary
+                          : AppColors.textSecondary,
                       fontSize: isTotal ? 15 : 14,
                       fontWeight: isTotal ? FontWeight.w600 : FontWeight.normal)),
             ),
@@ -516,7 +711,9 @@ class StatsRow extends StatelessWidget {
               child: Text(percent,
                   textAlign: TextAlign.right,
                   style: TextStyle(
-                      color: isTotal ? AppColors.textPrimary : AppColors.textHint,
+                      color: isTotal
+                          ? AppColors.textPrimary
+                          : AppColors.textHint,
                       fontSize: 12)),
             ),
           ],
@@ -525,15 +722,16 @@ class StatsRow extends StatelessWidget {
 }
 
 // ==========================================
-// ✅ PIE CHART & LEGEND (без изменений)
+// ✅ PIE CHART & LEGEND
 // ==========================================
 class PieChartWidget extends StatelessWidget {
   final double proteinPercent, fatsPercent, carbsPercent;
-  const PieChartWidget(
-      {super.key,
-      required this.proteinPercent,
-      required this.fatsPercent,
-      required this.carbsPercent});
+  const PieChartWidget({
+    super.key,
+    required this.proteinPercent,
+    required this.fatsPercent,
+    required this.carbsPercent,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -544,8 +742,8 @@ class PieChartWidget extends StatelessWidget {
         title: '${proteinPercent.toStringAsFixed(0)}%',
         color: Colors.green,
         radius: 50,
-        titleStyle:
-            const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+        titleStyle: const TextStyle(
+            fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
       ));
     }
     if (fatsPercent > 0) {
@@ -554,8 +752,8 @@ class PieChartWidget extends StatelessWidget {
         title: '${fatsPercent.toStringAsFixed(0)}%',
         color: Colors.red,
         radius: 50,
-        titleStyle:
-            const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+        titleStyle: const TextStyle(
+            fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
       ));
     }
     if (carbsPercent > 0) {
@@ -564,8 +762,8 @@ class PieChartWidget extends StatelessWidget {
         title: '${carbsPercent.toStringAsFixed(0)}%',
         color: Colors.orange,
         radius: 50,
-        titleStyle:
-            const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+        titleStyle: const TextStyle(
+            fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
       ));
     }
     if (sections.isEmpty) {
@@ -613,10 +811,13 @@ class _Leg extends StatelessWidget {
           Container(
             width: 14,
             height: 14,
-            decoration: BoxDecoration(color: c, borderRadius: BorderRadius.circular(4)),
+            decoration: BoxDecoration(
+                color: c, borderRadius: BorderRadius.circular(4)),
           ),
           const SizedBox(width: 6),
-          Text(l, style: const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
+          Text(l,
+              style:
+                  const TextStyle(color: AppColors.textSecondary, fontSize: 12)),
         ],
       );
 }

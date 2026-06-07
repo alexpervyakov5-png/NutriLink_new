@@ -10,6 +10,7 @@ import '../widgets.dart';
 import 'comment_bottom_sheet.dart';
 import 'diary_header.dart';
 import 'food_search_sheet.dart';
+import 'goals_edit_sheet.dart';
 
 bool _isSameDate(DateTime a, DateTime? b) =>
     b != null && a.year == b.year && a.month == b.month && a.day == b.day;
@@ -37,11 +38,9 @@ class _DiaryScreenState extends State<DiaryScreen>
         if (mounted) {
           final diaryService = context.read<DiaryService>();
           diaryService.refresh();
-          
-          // 🔥 Предзагружаем продукты и рецепты в фоне
-          // Чтобы при открытии поиска данные уже были в кэше
+
           diaryService.preloadFoodItems();
-          
+
           _lastLoadedDate = DateTime.now();
           _isInitialized = true;
         }
@@ -71,7 +70,21 @@ class _DiaryScreenState extends State<DiaryScreen>
             ),
           )
         : svc.goals != null
-            ? GoalsSection(goals: svc.goals!)
+            ? Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: GoalsSection(
+                  goals: svc.goals!,
+                  onTap: () => showGoalsEditSheet(
+                    ctx: context,
+                    initialProtein: svc.goals!.proteinTarget,
+                    initialFat: svc.goals!.fatsTarget,
+                    initialCarbs: svc.goals!.carbsTarget,
+                    initialCalories: svc.goals!.caloriesTarget,
+                    date: svc.date,
+                  ),
+                ),
+              )
             : const SizedBox.shrink();
 
     return Scaffold(
