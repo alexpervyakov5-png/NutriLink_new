@@ -1,12 +1,27 @@
-import 'package:Nutrilink/core/error_handler.dart';
-import 'package:Nutrilink/data/diary_service.dart';
 import 'package:flutter/material.dart';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:provider/provider.dart';
 
 import '../core/config.dart';
+import '../core/error_handler.dart';
+import '../data/diary_service.dart';
 import '../data/models.dart';
 import 'widgets/custom_tab_icon.dart';
+
+// ==========================================
+// 🔥 Расчёт цвета прогресса для целей
+// ==========================================
+Color getGoalProgressColor(int current, int target) {
+  if (target <= 0) return AppColors.textHint;
+
+  final percent = (current / target) * 100;
+
+  if (percent < 20) return Colors.orange;
+  if (percent < 75) return Colors.yellow.shade700;
+  if (percent <= 110) return Colors.green;
+  if (percent <= 120) return Colors.orange;
+  return Colors.red;
+}
 
 // ==========================================
 // ✅ AUTH TEXT FIELD
@@ -174,22 +189,8 @@ class _RoleCard extends StatelessWidget {
 }
 
 // ==========================================
-// ✅ GOALS SECTION (Обновлён: тап для редактирования + динамические цвета)
+// ✅ GOALS SECTION (с динамическими цветами)
 // ==========================================
-
-/// Расчёт цвета прогресса согласно ТЗ
-Color getGoalProgressColor(int current, int target) {
-  if (target <= 0) return AppColors.textHint;
-
-  final percent = (current / target) * 100;
-
-  if (percent < 20) return Colors.orange; // 10% -> Оранжевый
-  if (percent < 75) return Colors.yellow.shade700; // 50% -> Жёлтый
-  if (percent <= 110) return Colors.green; // 95%, 105% -> Зелёный
-  if (percent <= 120) return Colors.orange; // 115% -> Оранжевый
-  return Colors.red; // 125% -> Красный
-}
-
 class GoalsSection extends StatelessWidget {
   final DailyGoals goals;
   final VoidCallback? onTap;
@@ -319,12 +320,14 @@ class _GoalCell extends StatelessWidget {
 }
 
 // ==========================================
-// ✅ MEAL SECTION
+// ✅ MEAL SECTION (с индикатором непрочитанного комментария)
 // ==========================================
 class MealSection extends StatelessWidget {
   final String title, imagePath;
   final int totalCalories;
   final bool isExpanded;
+  final bool canEdit;
+  final bool hasUnreadComment; // 🔥 НОВОЕ: есть ли непрочитанный комментарий
   final VoidCallback onExpansionChanged, onCommentTap, onAddTap;
   final List<Meal> items;
 
@@ -334,6 +337,8 @@ class MealSection extends StatelessWidget {
     required this.imagePath,
     required this.totalCalories,
     required this.isExpanded,
+    required this.canEdit,
+    required this.hasUnreadComment, // 🔥 НОВОЕ
     required this.onExpansionChanged,
     required this.onCommentTap,
     required this.onAddTap,
@@ -370,8 +375,8 @@ class MealSection extends StatelessWidget {
                           width: 32,
                           height: 32,
                           fit: BoxFit.cover,
-                          errorBuilder: (_, __, ___) =>
-                              Icon(_icon(title), color: AppColors.accent, size: 24),
+                          errorBuilder: (_, __, ___) => Icon(_icon(title),
+                              color: AppColors.accent, size: 24),
                         ),
                       ),
                     ),
@@ -397,21 +402,58 @@ class MealSection extends StatelessWidget {
                               fontWeight: FontWeight.w600)),
                     ),
                     const SizedBox(width: 8),
+                    // 🔥 Кнопка комментария с индикатором непрочитанного
                     if (isExpanded)
                       GestureDetector(
                         onTap: onCommentTap,
-                        child: Container(
-                          padding: const EdgeInsets.all(6),
-                          decoration: BoxDecoration(
-                            color: AppColors.background,
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: const Icon(Icons.chat_bubble_outline,
-                              color: AppColors.accent, size: 18),
+                        child: Stack(
+                          clipBehavior: Clip.none,
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.all(6),
+                              decoration: BoxDecoration(
+                                color: AppColors.background,
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: const Icon(Icons.chat_bubble_outline,
+                                  color: AppColors.accent, size: 18),
+                            ),
+                            // 🔥 Индикатор непрочитанного комментария
+                            if (hasUnreadComment)
+                              Positioned(
+                                right: -2,
+                                top: -2,
+                                child: Container(
+                                  padding: const EdgeInsets.all(2),
+                                  decoration: BoxDecoration(
+                                    color: Colors.red,
+                                    borderRadius: BorderRadius.circular(6),
+                                    border: Border.all(
+                                      color: AppColors.backgroundSecondary,
+                                      width: 1.5,
+                                    ),
+                                  ),
+                                  constraints: const BoxConstraints(
+                                    minWidth: 12,
+                                    minHeight: 12,
+                                  ),
+                                  child: const Text(
+                                    '!',
+                                    style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 9,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                    textAlign: TextAlign.center,
+                                  ),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
                     const SizedBox(width: 6),
-                    if (isExpanded)
+                    // 🔥 Кнопка добавления только если canEdit
+                    if (isExpanded && canEdit)
                       GestureDetector(
                         onTap: onAddTap,
                         child: Container(
@@ -442,6 +484,7 @@ class MealSection extends StatelessWidget {
                         const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
                     child: _MealItem(
                       meal: item,
+                      canDelete: canEdit, // 🔥 Свайп только если canEdit
                       onDelete: () => _showDeleteConfirmation(context, item),
                     ),
                   )),
@@ -511,17 +554,65 @@ class MealSection extends StatelessWidget {
   }
 }
 
+// ==========================================
+// ✅ MEAL ITEM (с поддержкой свайпа-удаления)
+// ==========================================
 class _MealItem extends StatelessWidget {
   final Meal meal;
+  final bool canDelete; // 🔥 НОВОЕ: можно ли удалять
   final VoidCallback onDelete;
 
   const _MealItem({
     required this.meal,
+    required this.canDelete,
     required this.onDelete,
   });
 
   @override
   Widget build(BuildContext context) {
+    final content = Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.background,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppColors.backgroundSecondary,
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(
+              meal.isRecipe ? Icons.restaurant_menu : Icons.restaurant,
+              color: AppColors.textSecondary,
+              size: 20,
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(meal.name,
+                    style: const TextStyle(
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.w500)),
+                Text('${meal.weight}г • ${meal.calories} ккал',
+                    style: const TextStyle(
+                        color: AppColors.textSecondary, fontSize: 12)),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+
+    // 🔥 Dismissible только если canDelete == true
+    if (!canDelete) return content;
+
     return Dismissible(
       key: Key(meal.id),
       direction: DismissDirection.endToStart,
@@ -554,45 +645,7 @@ class _MealItem extends StatelessWidget {
           ],
         ),
       ),
-      child: Container(
-        margin: const EdgeInsets.only(top: 8),
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: AppColors.background,
-          borderRadius: BorderRadius.circular(8),
-        ),
-        child: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: AppColors.backgroundSecondary,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(
-                meal.isRecipe ? Icons.restaurant_menu : Icons.restaurant,
-                color: AppColors.textSecondary,
-                size: 20,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(meal.name,
-                      style: const TextStyle(
-                          color: AppColors.textPrimary,
-                          fontWeight: FontWeight.w500)),
-                  Text('${meal.weight}г • ${meal.calories} ккал',
-                      style: const TextStyle(
-                          color: AppColors.textSecondary, fontSize: 12)),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
+      child: content,
     );
   }
 }
@@ -722,7 +775,7 @@ class StatsRow extends StatelessWidget {
 }
 
 // ==========================================
-// ✅ PIE CHART & LEGEND
+// ✅ PIE CHART
 // ==========================================
 class PieChartWidget extends StatelessWidget {
   final double proteinPercent, fatsPercent, carbsPercent;
@@ -784,6 +837,9 @@ class PieChartWidget extends StatelessWidget {
   }
 }
 
+// ==========================================
+// ✅ CHART LEGEND
+// ==========================================
 class ChartLegend extends StatelessWidget {
   const ChartLegend({super.key});
 

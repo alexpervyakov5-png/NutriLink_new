@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'package:collection/collection.dart';
 
 import '../../core/config.dart';
 import '../../core/error_handler.dart';
 import '../../data/diary_service.dart';
+import '../../data/clients_service.dart';
 import '../../data/models.dart';
 import '../widgets.dart';
 import 'comment_bottom_sheet.dart';
@@ -38,9 +38,7 @@ class _DiaryScreenState extends State<DiaryScreen>
         if (mounted) {
           final diaryService = context.read<DiaryService>();
           diaryService.refresh();
-
           diaryService.preloadFoodItems();
-
           _lastLoadedDate = DateTime.now();
           _isInitialized = true;
         }
@@ -52,6 +50,11 @@ class _DiaryScreenState extends State<DiaryScreen>
   Widget build(BuildContext context) {
     super.build(context);
     final svc = context.watch<DiaryService>();
+    final clientsSvc = context.watch<ClientsService>();
+    final isViewingClient = clientsSvc.isViewingClient;
+    final canEdit = clientsSvc.isViewingOwnData;
+    final clientName = clientsSvc.selectedClient?.name;
+
     final images = {
       'Завтрак': '${AppStrings.assetImages}breakfast.png',
       'Обед': '${AppStrings.assetImages}lunch.png',
@@ -99,6 +102,30 @@ class _DiaryScreenState extends State<DiaryScreen>
         color: AppColors.accent,
         child: Column(
           children: [
+            if (isViewingClient)
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 10),
+                color: AppColors.accent.withValues(alpha: 0.15),
+                child: Row(
+                  children: [
+                    Icon(Icons.visibility,
+                        color: AppColors.accent, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Просмотр клиента: $clientName',
+                        style: TextStyle(
+                          color: AppColors.accentLight,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
             DiaryHeader(
               date: svc.date,
               onDatePick: (DateTime? d) {
@@ -124,9 +151,23 @@ class _DiaryScreenState extends State<DiaryScreen>
                           totalCalories: svc.meals[t]!
                               .fold(0, (s, m) => s + m.calories),
                           isExpanded: svc.expanded[t] ?? false,
+                          canEdit: canEdit,
+                          hasUnreadComment: svc.hasUnreadCommentsForType(t),
                           onExpansionChanged: () => svc.toggle(t),
-                          onCommentTap: () =>
-                              _showComment(ctx: context, type: t),
+                          onCommentTap: () {
+                            final meals = svc.meals[t] ?? [];
+                            final allMealIds = <String>{};
+                            for (final m in meals) {
+                              allMealIds.addAll(m.dbMealIds);
+                            }
+                            final sectionComment = svc.getSectionComment(t);
+                            _showComment(
+                              ctx: context,
+                              type: t,
+                              mealIds: allMealIds.toList(),
+                              initialComment: sectionComment,
+                            );
+                          },
                           onAddTap: () =>
                               _openFoodSearch(ctx: context, type: t),
                           items: svc.meals[t]!,
@@ -140,11 +181,18 @@ class _DiaryScreenState extends State<DiaryScreen>
     );
   }
 
-  void _showComment({required BuildContext ctx, required MealType type}) {
+  void _showComment({
+    required BuildContext ctx,
+    required MealType type,
+    List<String>? mealIds,
+    String? initialComment,
+  }) {
     final svc = ctx.read<DiaryService>();
-    final currentComment = svc.getCommentForType(type) ??
-        svc.meals[type]?.firstOrNull?.comment ??
-        '';
+    final clientsSvc = ctx.read<ClientsService>();
+
+    svc.markCommentAsRead(type);
+
+    final isTrainerWriting = clientsSvc.isViewingClient;
 
     showModalBottomSheet(
       context: ctx,
@@ -152,7 +200,7 @@ class _DiaryScreenState extends State<DiaryScreen>
       isScrollControlled: true,
       builder: (sheetContext) => CommentBottomSheet(
         mealType: type,
-        initialComment: currentComment,
+        initialComment: initialComment ?? '',
         onSave: (String? newComment) async {
           if (sheetContext.mounted) {
             Navigator.pop(sheetContext);
@@ -163,10 +211,14 @@ class _DiaryScreenState extends State<DiaryScreen>
               type: type,
               date: svc.date,
               comment: newComment,
+              mealIds: mealIds,
+              isTrainerWriting: isTrainerWriting,
             );
 
             if (!success) {
               ErrorHandler.showGlobal('Не удалось сохранить комментарий');
+            } else {
+              ErrorHandler.showSuccessGlobal('Комментарий сохранён');
             }
           } catch (e) {
             ErrorHandler.showGlobal(

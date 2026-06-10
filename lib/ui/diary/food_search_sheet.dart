@@ -5,6 +5,7 @@ import '../../core/config.dart';
 import '../../core/error_handler.dart';
 import '../../core/safe_text_controller.dart';
 import '../../data/diary_service.dart';
+import '../../data/clients_service.dart';
 import '../../data/models.dart';
 import 'create_product_dialog.dart';
 import 'create_recipe_sheet.dart';
@@ -90,7 +91,7 @@ class _FoodSearchContentState extends State<_FoodSearchContent> {
               diaryService: widget.diaryService,
               isRecipe: item is Recipe,
               baseValue: item is Recipe
-                  ? (item as Recipe).baseWeightGrams
+                  ? item.baseWeightGrams
                   : 100.0,
             );
           },
@@ -224,6 +225,9 @@ class _FoodSearchContentState extends State<_FoodSearchContent> {
 
   @override
   Widget build(BuildContext context) {
+    final clientsSvc = context.watch<ClientsService>();
+    final canEdit = clientsSvc.isViewingOwnData;
+
     return StatefulBuilder(
       builder: (context, setModalState) {
         return FutureBuilder<List<dynamic>>(
@@ -280,97 +284,99 @@ class _FoodSearchContentState extends State<_FoodSearchContent> {
                         ),
                       ),
                       const SizedBox(width: 8),
-                      PopupMenuButton<String>(
-                        icon: Container(
-                          width: 44,
-                          height: 44,
-                          decoration: BoxDecoration(
-                            color: AppColors.accent,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Icon(Icons.add, color: Colors.black, size: 24),
-                        ),
-                        onSelected: (value) {
-                          if (widget.sheetContext.mounted) {
-                            Navigator.of(widget.sheetContext).pop();
-                          }
-                          Future.microtask(() {
-                            if (widget.ctx.mounted) {
-                              if (value == 'product') {
-                                showCreateProductDialog(
-                                  ctx: widget.ctx,
-                                  type: widget.type,
-                                  diaryService: widget.diaryService,
-                                  openPortionSelector: (c, t, item, svc) {
-                                    Navigator.of(c).pop();
-                                    _openPortionSelector(item);
-                                  },
-                                );
-                              } else {
-                                showCreateRecipeSheet(
-                                  ctx: widget.ctx,
-                                  type: widget.type,
-                                  diaryService: widget.diaryService,
-                                  openPortionSelector: (c, t, item, svc) {
-                                    Navigator.of(c).pop();
-                                    _openPortionSelector(item);
-                                  },
-                                );
-                              }
-                            }
-                          });
-                        },
-                        itemBuilder: (_) => [
-                          PopupMenuItem(
-                            value: 'product',
-                            child: Row(
-                              children: [
-                                Icon(Icons.restaurant, color: AppColors.accent),
-                                const SizedBox(width: 8),
-                                Text('Новый продукт',
-                                    style: TextStyle(color: AppColors.textPrimary)),
-                              ],
+                      if (canEdit)
+                        PopupMenuButton<String>(
+                          icon: Container(
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              color: AppColors.accent,
+                              borderRadius: BorderRadius.circular(8),
                             ),
+                            child: Icon(Icons.add, color: Colors.black, size: 24),
                           ),
-                          PopupMenuItem(
-                            value: 'recipe',
-                            child: Row(
-                              children: [
-                                Icon(Icons.menu_book, color: AppColors.accentLight),
-                                const SizedBox(width: 8),
-                                Text('Новый рецепт',
-                                    style: TextStyle(color: AppColors.textPrimary)),
-                              ],
+                          onSelected: (value) {
+                            if (widget.sheetContext.mounted) {
+                              Navigator.of(widget.sheetContext).pop();
+                            }
+                            Future.microtask(() {
+                              if (widget.ctx.mounted) {
+                                if (value == 'product') {
+                                  showCreateProductDialog(
+                                    ctx: widget.ctx,
+                                    type: widget.type,
+                                    diaryService: widget.diaryService,
+                                    openPortionSelector: (c, t, item, svc) {
+                                      Navigator.of(c).pop();
+                                      _openPortionSelector(item);
+                                    },
+                                  );
+                                } else {
+                                  showCreateRecipeSheet(
+                                    ctx: widget.ctx,
+                                    type: widget.type,
+                                    diaryService: widget.diaryService,
+                                    openPortionSelector: (c, t, item, svc) {
+                                      Navigator.of(c).pop();
+                                      _openPortionSelector(item);
+                                    },
+                                  );
+                                }
+                              }
+                            });
+                          },
+                          itemBuilder: (_) => [
+                            PopupMenuItem(
+                              value: 'product',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.restaurant, color: AppColors.accent),
+                                  const SizedBox(width: 8),
+                                  Text('Новый продукт',
+                                      style: TextStyle(color: AppColors.textPrimary)),
+                                ],
+                              ),
+                            ),
+                            PopupMenuItem(
+                              value: 'recipe',
+                              child: Row(
+                                children: [
+                                  Icon(Icons.menu_book, color: AppColors.accentLight),
+                                  const SizedBox(width: 8),
+                                  Text('Новый рецепт',
+                                      style: TextStyle(color: AppColors.textPrimary)),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (canEdit)
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      margin: const EdgeInsets.only(bottom: 8),
+                      decoration: BoxDecoration(
+                        color: AppColors.backgroundSecondary,
+                        borderRadius: BorderRadius.circular(6),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(Icons.info_outline, size: 14, color: AppColors.textHint),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              'Свайп ← удалить • Долгое нажатие — редактировать',
+                              style: TextStyle(
+                                color: AppColors.textHint,
+                                fontSize: 11,
+                              ),
                             ),
                           ),
                         ],
                       ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                    margin: const EdgeInsets.only(bottom: 8),
-                    decoration: BoxDecoration(
-                      color: AppColors.backgroundSecondary,
-                      borderRadius: BorderRadius.circular(6),
                     ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.info_outline, size: 14, color: AppColors.textHint),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            'Свайп ← удалить • Долгое нажатие — редактировать',
-                            style: TextStyle(
-                              color: AppColors.textHint,
-                              fontSize: 11,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
                   Expanded(
                     child: snapshot.connectionState == ConnectionState.waiting
                         ? const Center(child: CircularProgressIndicator())
@@ -398,7 +404,7 @@ class _FoodSearchContentState extends State<_FoodSearchContent> {
                                   final item = items[i];
                                   final isRecipe = item is Recipe;
                                   final isProduct = item is Product;
-                                  final name = isRecipe ? ' ${item.name}' : item.name;
+                                  final name = isRecipe ? '🍳 ${item.name}' : item.name;
                                   final subtitle = isRecipe
                                       ? '${item.totalCalories.toInt()} ккал • ${item.baseWeightGrams.toInt()}г'
                                       : '${item.calories.toInt()} ккал/100г • Б:${item.protein.toInt()} Ж:${item.fat.toInt()} У:${item.carbs.toInt()}';
@@ -433,20 +439,24 @@ class _FoodSearchContentState extends State<_FoodSearchContent> {
                                           style: TextStyle(
                                               color: AppColors.textSecondary,
                                               fontSize: 12)),
-                                      trailing: Icon(Icons.edit_outlined,
-                                          color: AppColors.textHint, size: 20),
+                                      trailing: canEdit
+                                          ? Icon(Icons.edit_outlined,
+                                              color: AppColors.textHint, size: 20)
+                                          : null,
                                       onTap: () => _openPortionSelector(item),
-                                      onLongPress: () {
-                                        if (isProduct) {
-                                          _showEditProductDialog(item);
-                                        } else if (isRecipe) {
-                                          _showEditRecipeDialog(item);
-                                        }
-                                      },
+                                      onLongPress: canEdit
+                                          ? () {
+                                              if (isProduct) {
+                                                _showEditProductDialog(item);
+                                              } else if (isRecipe) {
+                                                _showEditRecipeDialog(item);
+                                              }
+                                            }
+                                          : null,
                                     ),
                                   );
 
-                                  if (isProduct || isRecipe) {
+                                  if (canEdit && (isProduct || isRecipe)) {
                                     tile = Dismissible(
                                       key: Key('${isProduct ? "product" : "recipe"}_${item.id}'),
                                       direction: DismissDirection.endToStart,

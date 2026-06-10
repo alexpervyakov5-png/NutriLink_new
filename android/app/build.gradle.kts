@@ -11,6 +11,8 @@ android {
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
+        // 🔥 ВАЖНО: Включаем desugaring для поддержки Java 8+ функций
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -24,10 +26,11 @@ android {
         applicationId = "com.example.nutrilink"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
-        minSdk = flutter.minSdkVersion
+        minSdk = flutter.minSdkVersion  // 🔥 Минимум 21 для flutter_local_notifications
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        multiDexEnabled = true  // 🔥 Для поддержки множества методов
     }
 
     buildTypes {
@@ -41,4 +44,12 @@ android {
 
 flutter {
     source = "../.."
+}
+
+dependencies {
+    // 🔥 ВАЖНО: Desugaring для Java 8+ функций
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.4")
+    
+    // 🔥 MultiDex для поддержки большого количества методов
+    implementation("androidx.multidex:multidex:2.0.1")
 }

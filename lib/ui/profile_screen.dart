@@ -7,7 +7,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../data/profile_service.dart';
 import '../core/config.dart';
-import '../core/error_handler.dart'; // 🔥 ИСПРАВЛЕНО: добавлен импорт
+import '../core/error_handler.dart';
 import '../data/clients_service.dart';
 import '../data/auth_service.dart';
 import '../data/models.dart';
@@ -25,20 +25,37 @@ class _ProfileConstants {
 
 // ============================================
 // ProfileScreen
+// 🔥 ВАЖНО: ВСЕГДА показывает СВОЙ профиль тренера,
+// независимо от выбранного клиента в ClientsService.
 // ============================================
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  Future<Profile?>? _ownProfileFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadOwnProfile();
+  }
+
+  void _loadOwnProfile() {
+    final profileSvc = context.read<ProfileService>();
+    _ownProfileFuture = profileSvc.loadOwnProfile();
+  }
 
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
     final profileSvc = context.read<ProfileService>();
     final clientsSvc = context.watch<ClientsService>();
-    final profile = profileSvc.profile;
-
-    final authEmail = SupabaseConfig.client.auth.currentUser?.email ?? 'Неизвестно';
-    final userCode = profile?.code ?? auth.user?.code ?? 'Загрузка...';
     final isTrainer = auth.user?.role == UserRole.trainer;
+    final authEmail = SupabaseConfig.client.auth.currentUser?.email ?? 'Неизвестно';
 
     return Scaffold(
       backgroundColor: AppColors.backgroundSecondary,
@@ -87,148 +104,166 @@ class ProfileScreen extends StatelessWidget {
       ),
       body: RefreshIndicator(
         onRefresh: () async {
-          await profileSvc.load(force: true);
+          setState(() {
+            _loadOwnProfile();
+          });
         },
         color: AppColors.accent,
-        child: Padding(
-          padding: const EdgeInsets.all(20),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                // Инфо-баннер при просмотре данных клиента
-                if (clientsSvc.isViewingClient) ...[
-                  Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppColors.accent.withValues(alpha: 0.15),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                          color: AppColors.accent.withValues(alpha: 0.4)),
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(Icons.info_outline,
-                            color: AppColors.accent, size: 20),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: Text(
-                            'Вы просматриваете данные клиента. Здесь отображаются настройки вашего аккаунта.',
-                            style: TextStyle(
-                                color: AppColors.accentLight, fontSize: 13),
-                          ),
+        child: FutureBuilder<Profile?>(
+          future: _ownProfileFuture,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState == ConnectionState.waiting &&
+                snapshot.data == null) {
+              return const Center(
+                child: CircularProgressIndicator(color: AppColors.accent),
+              );
+            }
+
+            final profile = snapshot.data;
+            final userCode = profile?.code ?? auth.user?.code ?? 'Загрузка...';
+
+            return Padding(
+              padding: const EdgeInsets.all(20),
+              child: SingleChildScrollView(
+                physics: const AlwaysScrollableScrollPhysics(),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // Инфо-баннер при просмотре данных клиента
+                    if (clientsSvc.isViewingClient) ...[
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: AppColors.accent.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                              color: AppColors.accent.withValues(alpha: 0.4)),
                         ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                ],
-
-                // Карточка с кодом пользователя
-                if (userCode != 'Загрузка...' && userCode.isNotEmpty)
-                  ProfileCodeCard(
-                    code: userCode,
-                    isTrainer: isTrainer,
-                    onCopy: () {
-                      if (!context.mounted) return;
-                      Clipboard.setData(ClipboardData(text: userCode));
-                      // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
-                      ErrorHandler.showSuccess(context, 'Код скопирован в буфер обмена');
-                    },
-                  ),
-                const SizedBox(height: 24),
-
-                // Раздел: Аккаунт
-                const Text(
-                  'Аккаунт',
-                  style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-                  decoration: BoxDecoration(
-                    color: AppColors.card,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    children: [
-                      _buildInfoRow(
-                        iconPath: '${AppStrings.assetIcons}email.png',
-                        fallbackIcon: Icons.email,
-                        label: 'Email',
-                        value: authEmail,
+                        child: Row(
+                          children: [
+                            Icon(Icons.info_outline,
+                                color: AppColors.accent, size: 20),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                'Вы просматриваете данные клиента. Здесь отображаются настройки вашего аккаунта.',
+                                style: TextStyle(
+                                    color: AppColors.accentLight, fontSize: 13),
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
-                      const Divider(color: AppColors.backgroundSecondary),
-                      _buildInfoRow(
-                        iconPath: '${AppStrings.assetIcons}person.png',
-                        fallbackIcon: Icons.person,
-                        label: 'Имя',
-                        value: profile?.fullName.isNotEmpty == true
-                            ? profile!.fullName
-                            : 'Не указано',
-                      ),
-                      const Divider(color: AppColors.backgroundSecondary),
-                      _buildInfoRow(
-                        iconPath: isTrainer 
-                            ? '${AppStrings.assetIcons}school.png' 
-                            : '${AppStrings.assetIcons}badge.png',
-                        fallbackIcon: isTrainer ? Icons.school : Icons.badge,
-                        label: 'Роль',
-                        value: isTrainer ? 'Тренер' : 'Клиент',
-                        valueColor: AppColors.accentLight,
-                      ),
+                      const SizedBox(height: 16),
                     ],
-                  ),
-                ),
 
-                const SizedBox(height: 32),
+                    // Карточка с кодом пользователя
+                    if (userCode != 'Загрузка...' && userCode.isNotEmpty)
+                      ProfileCodeCard(
+                        code: userCode,
+                        isTrainer: isTrainer,
+                        onCopy: () {
+                          if (!context.mounted) return;
+                          Clipboard.setData(ClipboardData(text: userCode));
+                          ErrorHandler.showSuccess(
+                              context, 'Код скопирован в буфер обмена');
+                        },
+                      ),
+                    const SizedBox(height: 24),
 
-                // Раздел: Безопасность
-                const Text(
-                  'Безопасность',
-                  style: TextStyle(
-                    color: AppColors.textPrimary,
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                OutlinedButton.icon(
-                  onPressed: () {
-                    if (!context.mounted) return;
-                    _showChangePasswordDialog(context, profileSvc);
-                  },
-                  icon: CustomIcon(
-                    path: '${AppStrings.assetIcons}lock.png',
-                    width: 20,
-                    height: 20,
-                    fallback: const Icon(Icons.lock_reset, size: 20),
-                  ),
-                  label:
-                      const Text('Сменить пароль', style: TextStyle(fontSize: 16)),
-                  style: OutlinedButton.styleFrom(
-                    foregroundColor: AppColors.accent,
-                    side: BorderSide(color: AppColors.accent),
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
+                    // Раздел: Аккаунт
+                    const Text(
+                      'Аккаунт',
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
                     ),
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
+                    const SizedBox(height: 16),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 16),
+                      decoration: BoxDecoration(
+                        color: AppColors.card,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Column(
+                        children: [
+                          _buildInfoRow(
+                            iconPath: '${AppStrings.assetIcons}email.png',
+                            fallbackIcon: Icons.email,
+                            label: 'Email',
+                            value: authEmail,
+                          ),
+                          const Divider(color: AppColors.backgroundSecondary),
+                          _buildInfoRow(
+                            iconPath: '${AppStrings.assetIcons}person.png',
+                            fallbackIcon: Icons.person,
+                            label: 'Имя',
+                            value: profile?.fullName.isNotEmpty == true
+                                ? profile!.fullName
+                                : 'Не указано',
+                          ),
+                          const Divider(color: AppColors.backgroundSecondary),
+                          _buildInfoRow(
+                            iconPath: isTrainer
+                                ? '${AppStrings.assetIcons}school.png'
+                                : '${AppStrings.assetIcons}badge.png',
+                            fallbackIcon:
+                                isTrainer ? Icons.school : Icons.badge,
+                            label: 'Роль',
+                            value: isTrainer ? 'Тренер' : 'Клиент',
+                            valueColor: AppColors.accentLight,
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 32),
+
+                    // Раздел: Безопасность
+                    const Text(
+                      'Безопасность',
+                      style: TextStyle(
+                        color: AppColors.textPrimary,
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    OutlinedButton.icon(
+                      onPressed: () {
+                        if (!context.mounted) return;
+                        _showChangePasswordDialog(context, profileSvc);
+                      },
+                      icon: CustomIcon(
+                        path: '${AppStrings.assetIcons}lock.png',
+                        width: 20,
+                        height: 20,
+                        fallback: const Icon(Icons.lock_reset, size: 20),
+                      ),
+                      label: const Text('Сменить пароль',
+                          style: TextStyle(fontSize: 16)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.accent,
+                        side: BorderSide(color: AppColors.accent),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
+              ),
+            );
+          },
         ),
       ),
     );
   }
 
-  // 🔥 Обновленный виджет строки с иконкой
   Widget _buildInfoRow({
     required String iconPath,
     required IconData fallbackIcon,
@@ -275,8 +310,6 @@ class ProfileScreen extends StatelessWidget {
     );
   }
 
-  // 🔥 УДАЛЕНО: _formatError, _showError, _showSuccess — используем ErrorHandler
-
   void _showChangePasswordDialog(BuildContext context, ProfileService svc) {
     final passCtrl = TextEditingController();
     final confirmCtrl = TextEditingController();
@@ -307,8 +340,8 @@ class ProfileScreen extends StatelessWidget {
                   decoration: InputDecoration(
                     labelText: 'Новый пароль',
                     border: const OutlineInputBorder(),
-                    contentPadding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 14),
                     suffixIcon: IconButton(
                       icon: Icon(
                         obscurePass ? Icons.visibility : Icons.visibility_off,
@@ -321,11 +354,9 @@ class ProfileScreen extends StatelessWidget {
                   ),
                   validator: (v) {
                     if (v == null || v.isEmpty) return 'Введите пароль';
-                    // 🔥 ИСПРАВЛЕНО: используем локальную константу
                     if (v.length < _ProfileConstants.minPasswordLength) {
                       return 'Минимум ${_ProfileConstants.minPasswordLength} символов';
                     }
-                    // 🔥 ИСПРАВЛЕНО: используем локальную константу
                     if (!RegExp(_ProfileConstants.passwordRegex).hasMatch(v)) {
                       return 'Пароль должен содержать буквы и цифры';
                     }
@@ -340,8 +371,8 @@ class ProfileScreen extends StatelessWidget {
                   decoration: InputDecoration(
                     labelText: 'Подтвердите пароль',
                     border: const OutlineInputBorder(),
-                    contentPadding:
-                        const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 14),
                     suffixIcon: IconButton(
                       icon: Icon(
                         obscureConfirm
@@ -376,7 +407,6 @@ class ProfileScreen extends StatelessWidget {
                 if (!formKey.currentState!.validate()) return;
 
                 if (passCtrl.text != confirmCtrl.text) {
-                  // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
                   ErrorHandler.show(dialogCtx, 'Пароли не совпадают');
                   return;
                 }
@@ -384,35 +414,31 @@ class ProfileScreen extends StatelessWidget {
                 try {
                   final success = await svc.updatePassword(passCtrl.text);
 
-                  // 🔥 ИСПРАВЛЕНО: проверяем mounted у состояния диалога
                   if (!sheetCtx.mounted) return;
 
                   if (success) {
                     Navigator.pop(dialogCtx);
-                    // 🔥 ИСПРАВЛЕНО: проверяем mounted у контекста экрана
                     if (context.mounted) {
                       ErrorHandler.showSuccess(context, 'Пароль успешно изменён');
                     }
                     passCtrl.clear();
                     confirmCtrl.clear();
                   } else {
-                    // 🔥 svc.error уже отформатирован в сервисе
                     ErrorHandler.show(
-                      dialogCtx, 
+                      dialogCtx,
                       svc.error ?? 'Не удалось сменить пароль',
                     );
                   }
                 } on AuthException catch (e) {
                   if (!sheetCtx.mounted) return;
-                  // 🔥 ИСПРАВЛЕНО: используем централизованный ErrorHandler
                   ErrorHandler.show(
-                    dialogCtx, 
+                    dialogCtx,
                     ErrorHandler.format(e, context: 'password_change'),
                   );
                 } on SocketException catch (e) {
                   if (!sheetCtx.mounted) return;
                   ErrorHandler.show(
-                    dialogCtx, 
+                    dialogCtx,
                     ErrorHandler.format(e, context: 'password_change'),
                   );
                 } catch (e, stack) {
@@ -421,7 +447,7 @@ class ProfileScreen extends StatelessWidget {
 
                   if (!sheetCtx.mounted) return;
                   ErrorHandler.show(
-                    dialogCtx, 
+                    dialogCtx,
                     ErrorHandler.format(e, context: 'password_change'),
                   );
                 }

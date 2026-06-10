@@ -189,7 +189,7 @@ class _StatsScreenState extends State<StatsScreen> {
                           SizedBox(
                             height: 200,
                             child: trend.isEmpty
-                                ? Center(child: Text('Нет данных за период', style: TextStyle(color: AppColors.textHint)))
+                                ? Center(child: Text('Нет данных за месяц', style: TextStyle(color: AppColors.textHint)))
                                 : _buildTrendChart(trend, config),
                           ),
                         ],
@@ -203,7 +203,7 @@ class _StatsScreenState extends State<StatsScreen> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          const Text('Питание (за период)', style: TextStyle(color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.bold)),
+                          const Text('Питание (за месяц)', style: TextStyle(color: AppColors.textPrimary, fontSize: 16, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 12),
                           StatsRow(label: 'Калории', value: '${svc.stats?.nutrition.calories ?? 0}', percent: '', iconPath: '${AppStrings.assetImages}calories.png', color: AppColors.progressCalories),
                           StatsRow(label: 'Белки', value: '${svc.stats?.nutrition.protein ?? 0}г', percent: '${svc.stats?.nutrition.proteinPercent.toStringAsFixed(0)}%', iconPath: '${AppStrings.assetImages}protein.png', color: AppColors.progressProtein),

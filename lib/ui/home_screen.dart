@@ -1,9 +1,8 @@
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../core/config.dart';
-import '../core/error_handler.dart'; // 🔥 ИСПРАВЛЕНО: используем централизованный ErrorHandler
+import '../core/error_handler.dart';
 import '../data/models.dart';
 
 import '../data/clients_service.dart';
@@ -11,9 +10,6 @@ import '../data/clients_service.dart';
 import 'widgets/custom_tab_icon.dart';
 import '../data/profile_service.dart';
 
-// ============================================
-// ВСПОМОГАТЕЛЬНЫЕ КОНСТАНТЫ (локальные)
-// ============================================
 class _HomeConstants {
   static const int minNameLength = 2;
   static const int minHeight = 100;
@@ -22,9 +18,6 @@ class _HomeConstants {
   static const int heightStart = 150;
 }
 
-// ============================================
-// HomeScreen
-// ============================================
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -51,16 +44,11 @@ class _HomeScreenState extends State<HomeScreen> {
       await context.read<ProfileService>().load();
     } catch (e) {
       if (!mounted) return;
-      // 🔥 ИСПРАВЛЕНО: используем централизованный ErrorHandler
       ErrorHandler.show(context, ErrorHandler.format(e, context: 'profile_load'));
     }
   }
 
-  // 🔥 УДАЛЕНО: _formatError, _showError, _showSuccess
-  // Теперь используем ErrorHandler из core/error_handler.dart
-
   String? _validateProfile(Profile p) {
-    // 🔥 ИСПРАВЛЕНО: используем локальные константы
     if (p.firstName.trim().isEmpty) return 'Введите имя';
     if (p.firstName.trim().length < _HomeConstants.minNameLength) {
       return 'Имя должно быть не менее ${_HomeConstants.minNameLength} символов';
@@ -177,7 +165,6 @@ class _HomeScreenState extends State<HomeScreen> {
                   onPressed: svc.saving ? null : () async {
                     final error = _validateProfile(svc.profile!);
                     if (error != null) {
-                      // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
                       ErrorHandler.show(context, error);
                       return;
                     }
@@ -187,15 +174,12 @@ class _HomeScreenState extends State<HomeScreen> {
                       if (!mounted) return;
                       
                       if (ok) {
-                        // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
                         ErrorHandler.showSuccess(context, 'Изменения сохранены');
                       } else {
-                        // 🔥 ИСПРАВЛЕНО: svc.error уже отформатирован в сервисе
                         ErrorHandler.show(context, svc.error ?? 'Не удалось сохранить изменения');
                       }
                     } catch (e) {
                       if (!mounted) return;
-                      // 🔥 ИСПРАВЛЕНО: используем централизованный ErrorHandler
                       ErrorHandler.show(context, ErrorHandler.format(e, context: 'profile_save'));
                     }
                   },
@@ -223,10 +207,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 }
-
-// ============================================
-// ВСПОМОГАТЕЛЬНЫЕ ВИДЖЕТЫ
-// ============================================
 
 class _Field extends StatelessWidget {
   final String label, value; 
@@ -290,10 +270,8 @@ class _DateField extends StatelessWidget {
               firstDate: DateTime(1900), 
               lastDate: DateTime.now()
             );
-            // 🔥 ИСПРАВЛЕНО: проверяем mounted у состояния, а не у параметра context
             if (date != null && context.mounted) {
               if (date.isAfter(DateTime.now())) {
-                // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
                 ErrorHandler.show(context, 'Дата не может быть в будущем');
                 return;
               }
@@ -301,7 +279,6 @@ class _DateField extends StatelessWidget {
             }
           } catch (e) {
             if (context.mounted) {
-              // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
               ErrorHandler.show(context, 'Не удалось выбрать дату');
             }
           }
@@ -363,7 +340,6 @@ class _Dropdown<T> extends StatelessWidget {
             alignedDropdown: true,
             child: DropdownButton<T>(
               isExpanded: true,
-              // 🔥 ИСПРАВЛЕНО: безопасная работа с пустым списком
               value: items.isEmpty 
                   ? (allowNull ? null : null) 
                   : (allowNull || items.contains(value)) 
@@ -411,7 +387,6 @@ class _Dropdown<T> extends StatelessWidget {
   );
 }
 
-// 🔥 ИСПРАВЛЕНО: добавлен дженерик <T> вместо dynamic
 class _Radio<T> extends StatelessWidget {
   final String label; 
   final String iconKey;

@@ -1,4 +1,3 @@
-import 'package:Nutrilink/main.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/config.dart';
@@ -9,7 +8,7 @@ import '../../data/models.dart';
 import 'input_helpers.dart';
 
 // ============================================
-// СОЗДАНИЕ НОВОГО ПРОДУКТА
+// 🔥 СОЗДАНИЕ НОВОГО ПРОДУКТА
 // ============================================
 void showCreateProductDialog({
   required BuildContext ctx,
@@ -154,13 +153,8 @@ void showCreateProductDialog({
                         if (onProductCreated != null) {
                           onProductCreated(newP);
                         } else {
-                          await Future.delayed(const Duration(milliseconds: 300));
-                          final globalCtx = navigatorKey.currentContext;
-                          if (globalCtx != null && globalCtx.mounted) {
-                            openPortionSelector(globalCtx, type, newP, diaryService);
-                          }
+                          ErrorHandler.showSuccessGlobal('Продукт создан');
                         }
-                        ErrorHandler.showSuccessGlobal('Продукт создан');
                       }
                     } catch (e) {
                       if (!dialogContext.mounted) return;
@@ -195,7 +189,7 @@ void showEditProductDialog({
   required BuildContext ctx,
   required Product product,
   required DiaryService diaryService,
-  required Function() onUpdated, // 🔥 Callback для обновления списка
+  required Function() onUpdated,
 }) {
   final nameCtrl = SafeTextEditingController(text: product.name);
   final calCtrl = SafeTextEditingController(text: product.calories.toStringAsFixed(0));
@@ -291,7 +285,7 @@ void showEditProductDialog({
 
                       if (success) {
                         ErrorHandler.showSuccessGlobal('Продукт обновлён');
-                        onUpdated(); // 🔥 Обновляем список
+                        onUpdated();
                       } else {
                         ErrorHandler.showGlobal('Не удалось обновить продукт');
                       }

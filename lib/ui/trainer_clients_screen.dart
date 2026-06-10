@@ -7,11 +7,9 @@ import '../core/error_handler.dart';
 import 'widgets/add_client_dialog.dart';
 import '../data/profile_service.dart';
 import '../data/auth_service.dart';
-
+import '../data/clients_service.dart';
 
 import '../data/models.dart';
-
-// 🔥 ИСПРАВЛЕНО: удалён неиспользуемый импорт '../data/clients_service.dart'
 
 class TrainerClientsScreen extends StatefulWidget {
   const TrainerClientsScreen({super.key});
@@ -48,7 +46,6 @@ class _TrainerClientsScreenState extends State<TrainerClientsScreen> {
       if (!mounted) return;
       
       setState(() {
-        // 🔥 ИСПРАВЛЕНО: фильтруем клиентов с null id для безопасности
         _clients = clients.where((c) => c.id != null).toList();
         _isLoading = false;
       });
@@ -138,6 +135,29 @@ class _TrainerClientsScreenState extends State<TrainerClientsScreen> {
           ErrorHandler.format(e, context: 'trainer_clients_remove'),
         );
       }
+    }
+  }
+
+  void _viewClientData(Profile client) {
+    if (client.id == null) return;
+    
+    final clientsService = context.read<ClientsService>();
+    
+    final clientInfo = clientsService.clients.firstWhere(
+      (c) => c.id == client.id,
+      orElse: () => ClientInfo(
+        id: client.id!,
+        name: client.fullName,
+        email: null,
+        code: client.code,
+        isMe: false,
+      ),
+    );
+    
+    clientsService.selectClient(clientInfo);
+    
+    if (context.mounted) {
+      Navigator.pop(context);
     }
   }
 
@@ -240,7 +260,6 @@ class _TrainerClientsScreenState extends State<TrainerClientsScreen> {
                           separatorBuilder: (context, index) => const SizedBox(height: 12),
                           itemBuilder: (context, index) {
                             final client = _clients[index];
-                            // 🔥 ИСПРАВЛЕНО: используем ! так как отфильтровали null id при загрузке
                             return Dismissible(
                               key: ValueKey(client.id!),
                               direction: DismissDirection.endToStart,
@@ -257,56 +276,72 @@ class _TrainerClientsScreenState extends State<TrainerClientsScreen> {
                                 ),
                               ),
                               onDismissed: (_) {
-                                // 🔥 client.id! безопасен, т.к. отфильтрован при загрузке
                                 _removeClient(client.id!, client.fullName);
                               },
-                              child: Container(
-                                padding: const EdgeInsets.all(16),
-                                decoration: BoxDecoration(
-                                  color: AppColors.backgroundSecondary,
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      padding: const EdgeInsets.all(12),
-                                      decoration: BoxDecoration(
-                                        color: AppColors.accent.withValues(alpha: 0.2),
-                                        borderRadius: BorderRadius.circular(10),
+                              child: GestureDetector(
+                                onTap: () => _viewClientData(client),
+                                child: Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.backgroundSecondary,
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      Container(
+                                        padding: const EdgeInsets.all(12),
+                                        decoration: BoxDecoration(
+                                          color: AppColors.accent.withValues(alpha: 0.2),
+                                          borderRadius: BorderRadius.circular(10),
+                                        ),
+                                        child: const Icon(
+                                          Icons.person,
+                                          color: AppColors.accentLight,
+                                          size: 24,
+                                        ),
                                       ),
-                                      child: const Icon(
-                                        Icons.person,
-                                        color: AppColors.accentLight,
-                                        size: 24,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 12),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            client.fullName,
-                                            style: const TextStyle(
-                                              color: AppColors.textPrimary,
-                                              fontSize: 16,
-                                              fontWeight: FontWeight.w600,
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment: CrossAxisAlignment.start,
+                                          children: [
+                                            Text(
+                                              client.fullName,
+                                              style: const TextStyle(
+                                                color: AppColors.textPrimary,
+                                                fontSize: 16,
+                                                fontWeight: FontWeight.w600,
+                                              ),
                                             ),
-                                          ),
-                                          if (client.code != null) ...[
+                                            if (client.code != null) ...[
+                                              const SizedBox(height: 4),
+                                              Text(
+                                                'Код: ${client.code}',
+                                                style: TextStyle(
+                                                  color: AppColors.textHint,
+                                                  fontSize: 12,
+                                                ),
+                                              ),
+                                            ],
                                             const SizedBox(height: 4),
                                             Text(
-                                              'Код: ${client.code}',
+                                              'назад',
                                               style: TextStyle(
-                                                color: AppColors.textHint,
-                                                fontSize: 12,
+                                                color: AppColors.accent,
+                                                fontSize: 11,
+                                                fontStyle: FontStyle.italic,
                                               ),
                                             ),
                                           ],
-                                        ],
+                                        ),
                                       ),
-                                    ),
-                                  ],
+                                      Icon(
+                                        Icons.arrow_forward_ios,
+                                        color: AppColors.accent,
+                                        size: 16,
+                                      ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             );

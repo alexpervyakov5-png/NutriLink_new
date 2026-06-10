@@ -11,9 +11,6 @@ import '../data/models.dart';
 import 'widgets.dart';
 import 'widgets/custom_tab_icon.dart';
 
-// ============================================
-// ВСПОМОГАТЕЛЬНЫЕ КОНСТАНТЫ (локальные, чтобы не зависеть от AppConstants)
-// ============================================
 class _AuthConstants {
   static const int minNameLength = 2;
   static const int minPasswordLength = 6;
@@ -23,9 +20,6 @@ class _AuthConstants {
   static const String deepLinkRedirect = 'nutrilink://auth/callback';
 }
 
-// ============================================
-// AUTH SCREEN
-// ============================================
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
 
@@ -38,7 +32,7 @@ class _AuthScreenState extends State<AuthScreen> {
   final _emailCtrl = TextEditingController();
   final _passCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
-  
+
   bool _isLogin = true;
   bool _obscure = true;
   bool _submitting = false;
@@ -54,63 +48,309 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Future<void> _submit() async {
     if (!_formKey.currentState!.validate() || !mounted || _submitting) return;
-    
+
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    if (messenger == null) {
+      debugPrint('⚠️ ScaffoldMessenger не найден перед отправкой формы');
+      return;
+    }
+
     final auth = context.read<AuthService>();
-    
+    final email = _emailCtrl.text.trim();
+
     setState(() => _submitting = true);
-    
+
+    bool result = false;
+    String? errorMsg;
+    String? successMsg;
+
     try {
-      final result = _isLogin
-          ? await auth.signIn(_emailCtrl.text.trim(), _passCtrl.text)
+      result = _isLogin
+          ? await auth.signIn(email, _passCtrl.text)
           : await auth.signUp(
-              email: _emailCtrl.text.trim(),
+              email: email,
               password: _passCtrl.text,
               username: _nameCtrl.text.trim(),
               role: _role,
             );
-      
-      if (!mounted) return;
-      
-      if (result == true) {
-        ErrorHandler.showSuccess(
-          context, 
-          _isLogin ? 'Добро пожаловать!' : 'Аккаунт создан!',
-        );
-        _clearForm();
+
+      if (result) {
+        if (_isLogin) {
+          successMsg = 'Добро пожаловать!';
+        } else {
+          // 🔥 РЕГИСТРАЦИЯ ПРОШЛА — показываем диалог подтверждения email
+          if (mounted) {
+            _showEmailConfirmationDialog(email);
+          }
+          setState(() => _submitting = false);
+          return;
+        }
       } else {
-        ErrorHandler.show(context, auth.error ?? 'Неизвестная ошибка');
+        // 🔥 Специальная обработка ошибки "email не подтверждён"
+        if (auth.error == 'email_not_confirmed') {
+          if (mounted) {
+            _showEmailConfirmationDialog(
+              auth.pendingEmail ?? email,
+              isFromLogin: true,
+            );
+          }
+          setState(() => _submitting = false);
+          return;
+        }
+        errorMsg = auth.error ?? 'Неизвестная ошибка';
       }
-      
     } on AuthException catch (e) {
-      if (!mounted) return;
       debugPrint('❌ AuthException: ${e.message} (code: ${e.code})');
-      ErrorHandler.show(
-        context, 
-        ErrorHandler.format(e, context: _isLogin ? 'login' : 'signup'),
-      );
-      
+      errorMsg = ErrorHandler.format(e, context: _isLogin ? 'login' : 'signup');
     } on SocketException catch (e) {
-      if (!mounted) return;
       debugPrint('❌ SocketException: $e');
-      ErrorHandler.show(context, ErrorHandler.format(e));
-      
+      errorMsg = ErrorHandler.format(e);
     } on PostgrestException catch (e) {
-      if (!mounted) return;
       debugPrint('❌ PostgrestException: ${e.message}');
-      ErrorHandler.show(context, ErrorHandler.format(e, context: 'database'));
-      
+      errorMsg = ErrorHandler.format(e, context: 'database');
     } catch (e, stack) {
-      if (!mounted) return;
       debugPrint('❌ Unknown auth error: $e');
       debugPrint('Stack: $stack');
-      ErrorHandler.show(
-        context, 
-        ErrorHandler.format(e, context: _isLogin ? 'login' : 'signup'),
-      );
+      errorMsg =
+          ErrorHandler.format(e, context: _isLogin ? 'login' : 'signup');
     } finally {
       if (mounted) {
         setState(() => _submitting = false);
       }
+    }
+
+    if (errorMsg != null) {
+      debugPrint('🔔 Показываем ошибку: $errorMsg');
+      messenger.showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.error_outline, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  errorMsg!,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.red.shade700,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 5),
+          action: SnackBarAction(
+            label: 'OK',
+            textColor: Colors.white,
+            onPressed: () => messenger.hideCurrentSnackBar(),
+          ),
+        ),
+      );
+    } else if (successMsg != null) {
+      debugPrint('🔔 Показываем успех: $successMsg');
+      messenger.showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.check_circle, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  successMsg!,
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.green.shade700,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 3),
+        ),
+      );
+
+      if (mounted) _clearForm();
+    }
+  }
+
+  // ============================================
+  // 🔥 ДИАЛОГ ПОДТВЕРЖДЕНИЯ EMAIL
+  // После закрытия автоматически переходит на экран входа
+  // ============================================
+  void _showEmailConfirmationDialog(String email, {bool isFromLogin = false}) {
+    bool isResending = false;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          backgroundColor: AppColors.background,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: AppColors.accent.withValues(alpha: 0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Icon(Icons.mark_email_unread,
+                    color: AppColors.accent, size: 24),
+              ),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: Text(
+                  'Подтвердите email',
+                  style: TextStyle(
+                    color: AppColors.textPrimary,
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                isFromLogin
+                    ? 'Ваш email ещё не подтверждён. Проверьте почту:'
+                    : 'Регистрация прошла успешно! Мы отправили письмо со ссылкой для подтверждения на адрес:',
+                style: const TextStyle(color: AppColors.textSecondary, fontSize: 14),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.backgroundSecondary,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  email,
+                  style: const TextStyle(
+                    color: AppColors.accentLight,
+                    fontSize: 15,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                '1. Откройте письмо\n2. Нажмите на ссылку подтверждения\n3. Вернитесь в приложение и войдите',
+                style: TextStyle(color: AppColors.textSecondary, fontSize: 13),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                '💡 Если письмо не пришло, проверьте папку "Спам" или нажмите "Отправить снова"',
+                style: TextStyle(
+                  color: AppColors.textHint,
+                  fontSize: 11,
+                  fontStyle: FontStyle.italic,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: isResending
+                  ? null
+                  : () async {
+                      setDialogState(() => isResending = true);
+
+                      final auth = context.read<AuthService>();
+                      final success = await auth.resendConfirmationEmail(email);
+
+                      if (!dialogContext.mounted) return;
+                      setDialogState(() => isResending = false);
+
+                      if (success) {
+                        ScaffoldMessenger.of(dialogContext).showSnackBar(
+                          const SnackBar(
+                            content: Text('Письмо отправлено повторно'),
+                            backgroundColor: Colors.green,
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                      } else {
+                        ScaffoldMessenger.of(dialogContext).showSnackBar(
+                          SnackBar(
+                            content: Text(auth.error ?? 'Ошибка отправки'),
+                            backgroundColor: Colors.red,
+                          ),
+                        );
+                      }
+                    },
+              child: isResending
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Text('Отправить снова',
+                      style: TextStyle(color: AppColors.accent)),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (dialogContext.mounted) {
+                  Navigator.pop(dialogContext);
+                }
+                // 🔥 ПЕРЕКЛЮЧАЕМ НА ЭКРАН ВХОДА с заполненным email
+                _switchToLoginWithEmail(email);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.accent,
+                foregroundColor: Colors.black,
+              ),
+              child: const Text('К входу'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ============================================
+  // 🔥 ПЕРЕКЛЮЧЕНИЕ НА ЭКРАН ВХОДА с заполненным email
+  // ============================================
+  void _switchToLoginWithEmail(String email) {
+    // Сбрасываем состояние подтверждения
+    context.read<AuthService>().clearPendingConfirmation();
+
+    // Очищаем форму (кроме email)
+    _passCtrl.clear();
+    _nameCtrl.clear();
+
+    // Переключаемся на форму входа и подставляем email
+    setState(() {
+      _isLogin = true;
+      _emailCtrl.text = email;
+    });
+
+    // Показываем подсказку пользователю
+    if (mounted) {
+      final messenger = ScaffoldMessenger.maybeOf(context);
+      messenger?.showSnackBar(
+        SnackBar(
+          content: Row(
+            children: [
+              const Icon(Icons.info_outline, color: Colors.white, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'После подтверждения email войдите с вашими данными',
+                  style: const TextStyle(color: Colors.white),
+                ),
+              ),
+            ],
+          ),
+          backgroundColor: Colors.blue.shade700,
+          behavior: SnackBarBehavior.floating,
+          duration: const Duration(seconds: 4),
+        ),
+      );
     }
   }
 
@@ -124,7 +364,7 @@ class _AuthScreenState extends State<AuthScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
     final isBusy = auth.loading || _submitting;
-    
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -181,7 +421,6 @@ class _AuthScreenState extends State<AuthScreen> {
                     fallbackIcon: Icons.person,
                     validator: (v) {
                       if (v == null || v.trim().isEmpty) return 'Введите имя';
-                      // 🔥 ИСПРАВЛЕНО: используем локальную константу
                       if (v.trim().length < _AuthConstants.minNameLength) {
                         return 'Имя должно быть не менее ${_AuthConstants.minNameLength} символов';
                       }
@@ -199,7 +438,8 @@ class _AuthScreenState extends State<AuthScreen> {
                   keyboardType: TextInputType.emailAddress,
                   validator: (v) {
                     if (v == null || v.trim().isEmpty) return 'Введите email';
-                    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(v.trim())) {
+                    if (!RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$')
+                        .hasMatch(v.trim())) {
                       return 'Введите корректный email';
                     }
                     return null;
@@ -215,15 +455,15 @@ class _AuthScreenState extends State<AuthScreen> {
                   obscureText: _obscure,
                   suffixIcon: IconButton(
                     icon: CustomIcon(
-                      path: _obscure 
-                          ? '${AppStrings.assetIcons}visibility_off.png' 
+                      path: _obscure
+                          ? '${AppStrings.assetIcons}visibility_off.png'
                           : '${AppStrings.assetIcons}visibility.png',
                       width: 20,
                       height: 20,
                       color: AppColors.textHint,
                       fallback: Icon(
-                        _obscure ? Icons.visibility : Icons.visibility_off, 
-                        color: AppColors.textHint, 
+                        _obscure ? Icons.visibility : Icons.visibility_off,
+                        color: AppColors.textHint,
                         size: 20,
                       ),
                     ),
@@ -231,17 +471,16 @@ class _AuthScreenState extends State<AuthScreen> {
                   ),
                   validator: (v) {
                     if (v == null || v.isEmpty) return 'Введите пароль';
-                    // 🔥 ИСПРАВЛЕНО: используем локальную константу
                     if (v.length < _AuthConstants.minPasswordLength) {
                       return 'Минимум ${_AuthConstants.minPasswordLength} символов';
                     }
-                    if (!_isLogin && !RegExp(r'(?=.*[a-zA-Z])(?=.*\d)').hasMatch(v)) {
+                    if (!_isLogin &&
+                        !RegExp(r'(?=.*[a-zA-Z])(?=.*\d)').hasMatch(v)) {
                       return 'Пароль должен содержать буквы и цифры';
                     }
                     return null;
                   },
                 ),
-                // Подсказка по паролю для регистрации
                 if (!_isLogin)
                   Padding(
                     padding: const EdgeInsets.only(top: 4, left: 4),
@@ -287,7 +526,8 @@ class _AuthScreenState extends State<AuthScreen> {
                             height: 24,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              valueColor: AlwaysStoppedAnimation<Color>(Colors.black),
+                              valueColor:
+                                  AlwaysStoppedAnimation<Color>(Colors.black),
                             ),
                           )
                         : Text(
@@ -350,16 +590,16 @@ class _AuthScreenState extends State<AuthScreen> {
   void _showForgotPasswordDialog() {
     final emailCtrl = TextEditingController(text: _emailCtrl.text);
     bool dialogLoading = false;
-    
-    // 🔥 Сохраняем ссылку на context State до async-операций
+
     final stateContext = context;
-    
+
     showDialog(
       context: stateContext,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, setDialogState) => AlertDialog(
           backgroundColor: AppColors.background,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
           title: const Text(
             'Восстановление пароля',
             style: TextStyle(color: AppColors.textPrimary),
@@ -389,59 +629,62 @@ class _AuthScreenState extends State<AuthScreen> {
           actions: [
             TextButton(
               onPressed: dialogLoading ? null : () => Navigator.pop(ctx),
-              child: const Text('Отмена', style: TextStyle(color: AppColors.textHint)),
+              child: const Text('Отмена',
+                  style: TextStyle(color: AppColors.textHint)),
             ),
             ElevatedButton(
-              onPressed: dialogLoading ? null : () async {
-                final email = emailCtrl.text.trim();
-                if (email.isEmpty || !RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$').hasMatch(email)) {
-                  ErrorHandler.show(ctx, 'Введите корректный email');
-                  return;
-                }
-                
-                setDialogState(() => dialogLoading = true);
-                
-                try {
-                  await SupabaseConfig.client.auth.resetPasswordForEmail(
-                    email,
-                    redirectTo: _AuthConstants.deepLinkRedirect,
-                  );
-                  
-                  // 🔥 ИСПРАВЛЕНО: последовательные проверки монтирования
-                  // Сначала закрываем диалог (проверяем его контекст)
-                  if (ctx.mounted) {
-                    Navigator.pop(ctx);
-                  }
-                  // Потом показываем сообщение на экране (проверяем контекст экрана)
-                  if (stateContext.mounted) {
-                    ErrorHandler.showSuccess(stateContext, 'Инструкция отправлена на ваш email');
-                  }
-                  
-                } on AuthException catch (e) {
-                  if (ctx.mounted) {
-                    Navigator.pop(ctx);
-                  }
-                  if (stateContext.mounted) {
-                    ErrorHandler.show(
-                      stateContext, 
-                      ErrorHandler.format(e, context: 'password_reset'),
-                    );
-                  }
-                } catch (e) {
-                  if (ctx.mounted) {
-                    Navigator.pop(ctx);
-                  }
-                  if (stateContext.mounted) {
-                    ErrorHandler.show(stateContext, 'Ошибка отправки. Попробуйте позже');
-                    debugPrint('Reset password error: $e');
-                  }
-                } finally {
-                  // 🔥 Обновляем состояние диалога только если он ещё смонтирован
-                  if (ctx.mounted) {
-                    setDialogState(() => dialogLoading = false);
-                  }
-                }
-              },
+              onPressed: dialogLoading
+                  ? null
+                  : () async {
+                      final email = emailCtrl.text.trim();
+                      if (email.isEmpty ||
+                          !RegExp(r'^[\w-\.]+@([\w-]+\.)+[\w-]{2,4}$')
+                              .hasMatch(email)) {
+                        ErrorHandler.show(ctx, 'Введите корректный email');
+                        return;
+                      }
+
+                      setDialogState(() => dialogLoading = true);
+
+                      try {
+                        await SupabaseConfig.client.auth.resetPasswordForEmail(
+                          email,
+                          redirectTo: _AuthConstants.deepLinkRedirect,
+                        );
+
+                        if (ctx.mounted) {
+                          Navigator.pop(ctx);
+                        }
+                        if (stateContext.mounted) {
+                          ErrorHandler.showSuccess(
+                              stateContext, 'Инструкция отправлена на ваш email');
+                        }
+                      } on AuthException catch (e) {
+                        if (ctx.mounted) {
+                          Navigator.pop(ctx);
+                        }
+                        if (stateContext.mounted) {
+                          ErrorHandler.show(
+                            stateContext,
+                            ErrorHandler.format(
+                                e, context: 'password_reset'),
+                          );
+                        }
+                      } catch (e) {
+                        if (ctx.mounted) {
+                          Navigator.pop(ctx);
+                        }
+                        if (stateContext.mounted) {
+                          ErrorHandler.show(
+                              stateContext, 'Ошибка отправки. Попробуйте позже');
+                          debugPrint('Reset password error: $e');
+                        }
+                      } finally {
+                        if (ctx.mounted) {
+                          setDialogState(() => dialogLoading = false);
+                        }
+                      }
+                    },
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.accent,
                 foregroundColor: Colors.black,

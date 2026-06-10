@@ -7,6 +7,8 @@ import 'services.dart';
 import 'clients_service.dart';
 import 'models.dart';
 
+/// ProfileService работает с выбранным пользователем через ClientsService.
+/// Для HomeScreen это позволяет показывать данные тренера ИЛИ клиента.
 class ProfileService extends ChangeNotifier with ClientAwareService {
   @override
   final ClientsService clientsService;
@@ -95,6 +97,40 @@ class ProfileService extends ChangeNotifier with ClientAwareService {
     }
   }
 
+  /// 🔥 Загружает профиль КОНКРЕТНОГО пользователя (для ProfileScreen тренера)
+  Future<Profile?> loadOwnProfile() async {
+    final uid = SupabaseConfig.currentUserId;
+    if (uid == null || uid.isEmpty) return null;
+
+    try {
+      final response = await retryRequest(() => SupabaseConfig.client
+          .from('users')
+          .select()
+          .eq('id', uid)
+          .maybeSingle());
+
+      if (response == null) return null;
+
+      return Profile(
+        id: response['id'] as String,
+        firstName: _parseFirst(response['username']),
+        lastName: _parseLast(response['username']),
+        birthDate: response['date_of_birth'] != null
+            ? DateTime.parse(response['date_of_birth'] as String)
+            : null,
+        heightCm: toIntSafe(response['height_cm']),
+        gender: response['gender'] as String?,
+        goal: _parseGoal(response['goal'] as String?),
+        code: response['code'] as String?,
+        trainerId: response['trainer_id'] as String?,
+        roleId: response['role_id'] as String?,
+      );
+    } catch (e) {
+      debugPrint('❌ Load own profile error: $e');
+      return null;
+    }
+  }
+
   Future<bool> save() async {
     if (_profile == null) return false;
     _saving = true;
@@ -172,13 +208,10 @@ class ProfileService extends ChangeNotifier with ClientAwareService {
 
   Future<bool> addClientToTrainer(String trainerId, String clientId) async {
     try {
-      await retryRequest(() => SupabaseConfig.client
-          .from('users')
-          .update({
-            'trainer_id': trainerId,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', clientId));
+      await retryRequest(() => SupabaseConfig.client.from('users').update({
+        'trainer_id': trainerId,
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', clientId));
       return true;
     } catch (e) {
       debugPrint('❌ Add client to trainer error: $e');
@@ -188,13 +221,10 @@ class ProfileService extends ChangeNotifier with ClientAwareService {
 
   Future<bool> removeClientFromTrainer(String clientId) async {
     try {
-      await retryRequest(() => SupabaseConfig.client
-          .from('users')
-          .update({
-            'trainer_id': null,
-            'updated_at': DateTime.now().toIso8601String(),
-          })
-          .eq('id', clientId));
+      await retryRequest(() => SupabaseConfig.client.from('users').update({
+        'trainer_id': null,
+        'updated_at': DateTime.now().toIso8601String(),
+      }).eq('id', clientId));
       return true;
     } catch (e) {
       debugPrint('❌ Remove client from trainer error: $e');
@@ -210,18 +240,20 @@ class ProfileService extends ChangeNotifier with ClientAwareService {
           .eq('trainer_id', trainerId)
           .order('username', ascending: true));
 
-      return response.map((item) => Profile(
-        id: item['id'] as String,
-        firstName: _parseFirst(item['username']),
-        lastName: _parseLast(item['username']),
-        birthDate: null,
-        heightCm: null,
-        gender: null,
-        goal: GoalType.maintenance,
-        code: item['code'] as String?,
-        trainerId: item['trainer_id'] as String?,
-        roleId: item['role_id'] as String?,
-      )).toList();
+      return response
+          .map((item) => Profile(
+                id: item['id'] as String,
+                firstName: _parseFirst(item['username']),
+                lastName: _parseLast(item['username']),
+                birthDate: null,
+                heightCm: null,
+                gender: null,
+                goal: GoalType.maintenance,
+                code: item['code'] as String?,
+                trainerId: item['trainer_id'] as String?,
+                roleId: item['role_id'] as String?,
+              ))
+          .toList();
     } catch (e) {
       debugPrint('❌ Get trainer clients error: $e');
       return [];
@@ -242,9 +274,7 @@ class ProfileService extends ChangeNotifier with ClientAwareService {
     final n = v.toString().trim();
     return n.isEmpty
         ? ''
-        : (n.split(' ').length > 1
-            ? n.split(' ').skip(1).join(' ')
-            : '');
+        : (n.split(' ').length > 1 ? n.split(' ').skip(1).join(' ') : '');
   }
 
   GoalType _parseGoal(String? v) => v == null

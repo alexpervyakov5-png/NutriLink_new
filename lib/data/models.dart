@@ -58,7 +58,8 @@ class AuthUser extends Equatable {
   }
 
   @override
-  List<Object?> get props => [id, email, username, role, roleId, code, createdAt];
+  List<Object?> get props =>
+      [id, email, username, role, roleId, code, createdAt];
 }
 
 class Profile extends Equatable {
@@ -113,8 +114,18 @@ class Profile extends Equatable {
   String get fullName => '$firstName $lastName'.trim();
 
   @override
-  List<Object?> get props =>
-      [id, firstName, lastName, birthDate, heightCm, gender, goal, code, trainerId, roleId];
+  List<Object?> get props => [
+        id,
+        firstName,
+        lastName,
+        birthDate,
+        heightCm,
+        gender,
+        goal,
+        code,
+        trainerId,
+        roleId,
+      ];
 }
 
 class DailyGoals extends Equatable {
@@ -177,16 +188,19 @@ class DailyGoals extends Equatable {
 }
 
 // ============================================
-// Meal — обновлён: добавлено mealItemIds
+// Meal — с поддержкой удаления, комментариев и индикатора прочтения
 // ============================================
 class Meal extends Equatable {
-  final String id, name, weight;
+  final String id;
+  final String name, weight;
   final int calories, protein, fats, carbs;
   final MealType mealType;
   final DateTime createdAt;
   final String? comment;
   final bool isRecipe;
-  final List<String> mealItemIds; // 🔥 НОВОЕ: список реальных id meal_items из базы
+  final List<String> mealItemIds; // ID записей meal_items для удаления
+  final List<String> dbMealIds; // ID записей meals из БД для комментариев
+  final bool isRead; // 🔥 Прочитан ли комментарий пользователем
 
   const Meal({
     required this.id,
@@ -200,7 +214,9 @@ class Meal extends Equatable {
     required this.createdAt,
     this.comment,
     this.isRecipe = false,
-    this.mealItemIds = const [], // 🔥 По умолчанию пустой список
+    this.mealItemIds = const [],
+    this.dbMealIds = const [],
+    this.isRead = true, // 🔥 По умолчанию прочитано
   });
 
   Meal copyWith({
@@ -216,6 +232,8 @@ class Meal extends Equatable {
     String? comment,
     bool? isRecipe,
     List<String>? mealItemIds,
+    List<String>? dbMealIds,
+    bool? isRead,
   }) =>
       Meal(
         id: id ?? this.id,
@@ -230,6 +248,8 @@ class Meal extends Equatable {
         comment: comment ?? this.comment,
         isRecipe: isRecipe ?? this.isRecipe,
         mealItemIds: mealItemIds ?? this.mealItemIds,
+        dbMealIds: dbMealIds ?? this.dbMealIds,
+        isRead: isRead ?? this.isRead,
       );
 
   @override
@@ -246,6 +266,8 @@ class Meal extends Equatable {
         comment,
         isRecipe,
         mealItemIds,
+        dbMealIds,
+        isRead,
       ];
 }
 
@@ -348,15 +370,23 @@ class NutritionStats extends Equatable {
   }
 
   @override
-  List<Object?> get props =>
-      [protein, fats, carbs, calories, proteinPercent, fatsPercent, carbsPercent];
+  List<Object?> get props => [
+        protein,
+        fats,
+        carbs,
+        calories,
+        proteinPercent,
+        fatsPercent,
+        carbsPercent,
+      ];
 }
 
 class TrendPoint extends Equatable {
   final DateTime date;
   final double value;
   const TrendPoint({required this.date, required this.value});
-  @override List<Object?> get props => [date, value];
+  @override
+  List<Object?> get props => [date, value];
 }
 
 class StatsData extends Equatable {
@@ -419,14 +449,19 @@ class Product extends Equatable {
   }
 
   @override
-  List<Object?> get props => [id, name, calories, protein, fat, carbs, userId];
+  List<Object?> get props =>
+      [id, name, calories, protein, fat, carbs, userId];
 }
 
 class RecipeIngredient extends Equatable {
   final Product product;
   final double amountGrams;
-  const RecipeIngredient({required this.product, required this.amountGrams});
-  @override List<Object?> get props => [product, amountGrams];
+  const RecipeIngredient({
+    required this.product,
+    required this.amountGrams,
+  });
+  @override
+  List<Object?> get props => [product, amountGrams];
 }
 
 class Recipe extends Equatable {
@@ -449,10 +484,14 @@ class Recipe extends Equatable {
     this.ingredients = const [],
   });
 
-  double get caloriesPer100g => baseWeightGrams > 0 ? (totalCalories / baseWeightGrams) * 100 : 0;
-  double get proteinPer100g => baseWeightGrams > 0 ? (totalProtein / baseWeightGrams) * 100 : 0;
-  double get fatPer100g => baseWeightGrams > 0 ? (totalFat / baseWeightGrams) * 100 : 0;
-  double get carbsPer100g => baseWeightGrams > 0 ? (totalCarbs / baseWeightGrams) * 100 : 0;
+  double get caloriesPer100g =>
+      baseWeightGrams > 0 ? (totalCalories / baseWeightGrams) * 100 : 0;
+  double get proteinPer100g =>
+      baseWeightGrams > 0 ? (totalProtein / baseWeightGrams) * 100 : 0;
+  double get fatPer100g =>
+      baseWeightGrams > 0 ? (totalFat / baseWeightGrams) * 100 : 0;
+  double get carbsPer100g =>
+      baseWeightGrams > 0 ? (totalCarbs / baseWeightGrams) * 100 : 0;
 
   factory Recipe.fromJson(Map<String, dynamic> json,
       [List<RecipeIngredient> ingredients = const []]) {

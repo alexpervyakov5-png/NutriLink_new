@@ -27,8 +27,12 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     MealType.snack: false,
   };
 
-  final Map<MealType, String?> _typeComments = {};
-  String? getCommentForType(MealType type) => _typeComments[type];
+  // 🔥 Храним комментарии секций И их статус прочтения
+  final Map<MealType, String?> _sectionComments = {};
+  final Map<MealType, bool> _sectionCommentsUnread = {};
+  
+  String? getSectionComment(MealType type) => _sectionComments[type];
+  bool isSectionCommentUnread(MealType type) => _sectionCommentsUnread[type] ?? false;
 
   DateTime _date = DateTime.now();
   bool _loading = false;
@@ -85,6 +89,8 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     _cachedGoals = null;
     _goalsCacheTime = null;
     _isFoodPreloaded = false;
+    _sectionComments.clear();
+    _sectionCommentsUnread.clear();
   }
 
   void _clearFoodCaches() {
@@ -100,6 +106,8 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     _mealsDataCacheTime = null;
     _cachedGoals = null;
     _goalsCacheTime = null;
+    _sectionComments.clear();
+    _sectionCommentsUnread.clear();
   }
 
   DailyGoals? get goals => _goals;
@@ -110,6 +118,24 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
   bool get loadingGoals => _loadingGoals;
   String? get error => _error;
 
+  // ============================================
+  // 🔥 ПРОВЕРКА НАЛИЧИЯ НЕПРОЧИТАННЫХ КОММЕНТАРИЕВ
+  // ============================================
+  bool hasUnreadCommentsForType(MealType type) {
+    final meals = _meals[type] ?? [];
+    final hasUnreadInMeals = meals.any((m) => 
+        !m.isRead && m.comment != null && m.comment!.isNotEmpty);
+    
+    final hasUnreadSection = _sectionCommentsUnread[type] ?? false;
+    
+    final result = hasUnreadInMeals || hasUnreadSection;
+    debugPrint('🔍 hasUnreadCommentsForType($type): meals=$hasUnreadInMeals, section=$hasUnreadSection → $result');
+    return result;
+  }
+
+  // ============================================
+  // ПРЕДЗАГРУЗКА ДАННЫХ
+  // ============================================
   Future<void> preloadFoodItems() async {
     if (_isFoodPreloaded) {
       debugPrint('📦 Food items already preloaded');
@@ -179,7 +205,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         _cachedGoals != null &&
         _goalsCacheTime != null &&
         DateTime.now().difference(_goalsCacheTime!) < _cacheDuration) {
-      debugPrint(' Using cached goals');
+      debugPrint('📦 Using cached goals');
       _goals = _cachedGoals;
       return;
     }
@@ -193,7 +219,6 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
             .eq('user_id', uid)
             .eq('date', ds)
             .maybeSingle()),
-        // 🔥 Загружаем цели для конкретной даты из user_goals
         retryRequest(() => SupabaseConfig.client
             .from('user_goals')
             .select('protein_target, fat_target, carbs_target, calories_target')
@@ -215,13 +240,16 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
 
       _cachedGoals = _goals;
       _goalsCacheTime = DateTime.now();
-      debugPrint(' Cached goals for $ds');
+      debugPrint('💾 Cached goals for $ds');
     } catch (e) {
       debugPrint('❌ Goals load error: $e');
       _goals = const DailyGoals.empty();
     }
   }
 
+  // ============================================
+  // 🔥 ЗАГРУЗКА MEALS С ГРУППИРОВКОЙ + СЕКЦИОННЫЕ КОММЕНТАРИИ + is_read
+  // ============================================
   Future<void> _loadMealsOfType(MealType type, DateTime d,
       {bool force = false}) async {
     _mealsCacheTime[type] = null;
@@ -244,7 +272,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       final mealsData = await retryRequest(() => SupabaseConfig.client
           .from('meals')
           .select(
-              'id, meal_type, eaten_at, comment, meal_items(id, amount_grams, product_id, recipe_id, calories, protein, fat, carbs, products(name), recipes(name))')
+              'id, meal_type, eaten_at, comment, is_read, meal_items(id, amount_grams, product_id, recipe_id, calories, protein, fat, carbs, products(name), recipes(name))')
           .eq('user_id', uid)
           .eq('meal_type', type.dbValue)
           .eq('date', ds)
@@ -252,21 +280,44 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
 
       debugPrint('📦 Got ${mealsData.length} meals');
 
-      final List<Map<String, dynamic>> allItems = [];
-      String? comment;
-      DateTime? eatenAt;
-
+      String? sectionComment;
+      bool sectionIsUnread = false;
       for (var j in mealsData) {
-        final items = j['meal_items'] as List? ?? [];
-        if (j['comment'] != null && j['comment'].toString().isNotEmpty) {
-          comment = j['comment'] as String?;
+        final comment = j['comment'] as String?;
+        if (comment != null && comment.isNotEmpty) {
+          sectionComment = comment;
+          final isRead = (j['is_read'] as bool?) ?? true;
+          sectionIsUnread = !isRead;
+          debugPrint('💬 Found section comment: "$comment" (isRead: $isRead)');
+          break;
         }
-        if (eatenAt == null && j['eaten_at'] != null) {
+      }
+      _sectionComments[type] = sectionComment;
+      _sectionCommentsUnread[type] = sectionIsUnread;
+      debugPrint('💬 Section comment for $type: "$sectionComment" (isUnread: $sectionIsUnread)');
+
+      final List<Map<String, dynamic>> allItems = [];
+      
+      for (var j in mealsData) {
+        final mealId = j['id'] as String;
+        final comment = j['comment'] as String?;
+        final isRead = (j['is_read'] as bool?) ?? true;
+        final items = j['meal_items'] as List? ?? [];
+        DateTime? eatenAt;
+        if (j['eaten_at'] != null) {
           eatenAt = DateTime.parse(j['eaten_at'] as String);
+        }
+
+        if (items.isEmpty) {
+          debugPrint('⚠️ Meal $mealId has no items, skipping (comment: $comment, isRead: $isRead)');
+          continue;
         }
 
         for (var it in items) {
           allItems.add({
+            'meal_id': mealId,
+            'meal_comment': comment,
+            'is_read': isRead,
             'id': it['id'],
             'amount_grams': it['amount_grams'],
             'product_id': it['product_id'],
@@ -277,19 +328,18 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
             'carbs': it['carbs'],
             'products': it['products'],
             'recipes': it['recipes'],
+            'eaten_at': eatenAt,
           });
         }
       }
 
       if (allItems.isEmpty) {
-        if (comment != null && comment.isNotEmpty) {
-          _typeComments[type] = comment;
-        }
         _meals[type] = [];
-
         _cachedMeals ??= {};
         _cachedMeals![type] = [];
         _mealsDataCacheTime = DateTime.now();
+        debugPrint('✅ No meal items found for $type (section comment: $sectionComment)');
+        notifyListeners();
         return;
       }
 
@@ -298,7 +348,6 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       for (var it in allItems) {
         final productId = it['product_id'] as String?;
         final recipeId = it['recipe_id'] as String?;
-
         final key = productId ??
             (recipeId != null ? 'recipe_$recipeId' : 'item_${it['id']}');
 
@@ -310,15 +359,32 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
               toIntSafe(existing['calories']) + toIntSafe(it['calories']);
           existing['protein'] =
               toIntSafe(existing['protein']) + toIntSafe(it['protein']);
-          existing['fat'] =
-              toIntSafe(existing['fat']) + toIntSafe(it['fat']);
+          existing['fat'] = toIntSafe(existing['fat']) + toIntSafe(it['fat']);
           existing['carbs'] =
               toIntSafe(existing['carbs']) + toIntSafe(it['carbs']);
 
-          final existingIds =
+          final existingItemIds =
               (existing['meal_item_ids'] as List<String>? ?? []);
-          existingIds.add(it['id'] as String);
-          existing['meal_item_ids'] = existingIds;
+          existingItemIds.add(it['id'] as String);
+          existing['meal_item_ids'] = existingItemIds;
+
+          final existingMealIds =
+              (existing['db_meal_ids'] as List<String>? ?? []);
+          final mealId = it['meal_id'] as String;
+          if (!existingMealIds.contains(mealId)) {
+            existingMealIds.add(mealId);
+          }
+          existing['db_meal_ids'] = existingMealIds;
+
+          if ((existing['comment'] == null || (existing['comment'] as String).isEmpty) &&
+              it['meal_comment'] != null &&
+              (it['meal_comment'] as String).isNotEmpty) {
+            existing['comment'] = it['meal_comment'] as String;
+          }
+
+          final existingIsRead = (existing['is_read'] as bool?) ?? true;
+          final currentIsRead = (it['is_read'] as bool?) ?? true;
+          existing['is_read'] = existingIsRead && currentIsRead;
         } else {
           groupedItems[key] = {
             'id': it['id'],
@@ -332,6 +398,10 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
             'products': it['products'],
             'recipes': it['recipes'],
             'meal_item_ids': [it['id'] as String],
+            'db_meal_ids': [it['meal_id'] as String],
+            'comment': it['meal_comment'] as String?,
+            'is_read': (it['is_read'] as bool?) ?? true,
+            'eaten_at': it['eaten_at'] as DateTime?,
           };
         }
       }
@@ -354,7 +424,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         if (nm == null) {
           final recipesRaw = it['recipes'];
           if (recipesRaw is List && recipesRaw.isNotEmpty) {
-            nm = ' ${(recipesRaw[0] as Map?)?['name'] as String?}';
+            nm = '🍳 ${(recipesRaw[0] as Map?)?['name'] as String?}';
             isRecipe = true;
           } else if (recipesRaw is Map) {
             nm = '🍳 ${recipesRaw['name'] as String?}';
@@ -371,15 +441,16 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
           fats: toIntSafe(it['fat']),
           carbs: toIntSafe(it['carbs']),
           mealType: type,
-          createdAt: eatenAt ?? DateTime.now(),
-          comment: comment,
+          createdAt: (it['eaten_at'] as DateTime?) ?? DateTime.now(),
+          comment: it['comment'] as String?,
           isRecipe: isRecipe,
           mealItemIds: (it['meal_item_ids'] as List<String>?) ?? [],
+          dbMealIds: (it['db_meal_ids'] as List<String>?) ?? [],
+          isRead: (it['is_read'] as bool?) ?? true,
         ));
       }
 
       _meals[type] = meals;
-
       _cachedMeals ??= {};
       _cachedMeals![type] = meals;
       _mealsDataCacheTime = DateTime.now();
@@ -439,6 +510,9 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     _loadMealsOfType(type, _date).then((_) => notifyListeners());
   }
 
+  // ============================================
+  // ПРОДУКТЫ
+  // ============================================
   Future<List<Product>> getProducts(String query) async {
     try {
       if (query.isEmpty &&
@@ -546,6 +620,9 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     }
   }
 
+  // ============================================
+  // СПИСОК ЕДЫ (продукты + рецепты)
+  // ============================================
   Future<List<dynamic>> getAllFoodItems(String query) async {
     try {
       final uid = userId;
@@ -700,7 +777,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         ingredients: ingredients,
       );
     } catch (e) {
-      debugPrint(' Create recipe error: $e');
+      debugPrint('❌ Create recipe error: $e');
       _error = ErrorHandler.format(e, context: 'recipe');
       notifyListeners();
       return null;
@@ -729,7 +806,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       debugPrint('✅ Recipe deleted successfully');
       return true;
     } catch (e) {
-      debugPrint(' Delete recipe error: $e');
+      debugPrint('❌ Delete recipe error: $e');
       return false;
     }
   }
@@ -795,6 +872,9 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     }
   }
 
+  // ============================================
+  // ДОБАВЛЕНИЕ ПРОДУКТА В ПРИЁМ ПИЩИ
+  // ============================================
   Future<bool> _addMealItemCore({
     required MealType type,
     required String productName,
@@ -817,13 +897,14 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       debugPrint('📝 Searching for existing meal...');
       final existingMeal = await retryRequest(() => SupabaseConfig.client
           .from('meals')
-          .select('id')
+          .select('id, comment')
           .eq('user_id', uid)
           .eq('meal_type', type.dbValue)
           .eq('date', dateStr)
           .maybeSingle());
 
       String mealId;
+      String? existingComment;
 
       if (existingMeal == null) {
         debugPrint('📝 Creating new meal...');
@@ -834,7 +915,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
               'meal_type': type.dbValue,
               'date': dateStr,
               'eaten_at': DateTime.now().toIso8601String(),
-              if (comment != null && comment.isNotEmpty) 'comment': comment,
+              'is_read': true,
             })
             .select('id')
             .single());
@@ -843,14 +924,8 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         debugPrint('✅ New meal created: $mealId');
       } else {
         mealId = existingMeal['id'] as String;
-        debugPrint('✅ Found existing meal: $mealId');
-
-        if (comment != null && comment.isNotEmpty) {
-          await retryRequest(() => SupabaseConfig.client
-              .from('meals')
-              .update({'comment': comment})
-              .eq('id', mealId));
-        }
+        existingComment = existingMeal['comment'] as String?;
+        debugPrint('✅ Found existing meal: $mealId (comment: $existingComment)');
       }
 
       final insertData = <String, dynamic>{
@@ -891,9 +966,11 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         carbs: carbs,
         mealType: type,
         createdAt: DateTime.now(),
-        comment: comment,
+        comment: existingComment,
         isRecipe: recipeId != null,
         mealItemIds: [newMealItemId],
+        dbMealIds: [mealId],
+        isRead: true,
       );
       if (_meals[type] != null) {
         _meals[type] = [..._meals[type]!, newMeal];
@@ -1026,10 +1103,15 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     }
   }
 
+  // ============================================
+  // 🔥 ОБНОВЛЕНИЕ КОММЕНТАРИЯ СЕКЦИИ
+  // ============================================
   Future<bool> updateComment({
     required MealType type,
     required DateTime date,
     String? comment,
+    List<String>? mealIds,
+    bool isTrainerWriting = false,
   }) async {
     try {
       final uid = userId;
@@ -1038,43 +1120,235 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       final trimmed =
           comment?.trim().isEmpty == true ? null : comment?.trim();
 
-      _typeComments[type] = trimmed;
-      if (_meals[type]!.isNotEmpty && trimmed != null) {
-        final updated = List<Meal>.from(_meals[type]!);
-        updated[0] = updated[0].copyWith(comment: trimmed);
-        _meals[type] = updated;
-      }
+      final isReadValue = isTrainerWriting ? false : true;
+
+      debugPrint('💬 updateComment called:');
+      debugPrint('   - type: $type');
+      debugPrint('   - isTrainerWriting: $isTrainerWriting');
+      debugPrint('   - comment: "$trimmed"');
+      debugPrint('   - current user (uid): $uid');
+      debugPrint('   - selectedUserId (client): ${clientsService.selectedUserId}');
+
+      _sectionComments[type] = trimmed;
+      _sectionCommentsUnread[type] = isTrainerWriting && trimmed != null;
+      debugPrint('💬 Updated local cache: comment="$trimmed", isUnread=${_sectionCommentsUnread[type]}');
       notifyListeners();
 
-      final existing = await retryRequest(() => SupabaseConfig.client
-          .from('meals')
-          .select('id')
-          .eq('user_id', uid)
-          .eq('date', ds)
-          .eq('meal_type', type.dbValue)
-          .maybeSingle());
+      // 🔥 ВАЖНО: если пишет тренер, обновляем meals клиента, а не свои!
+      final targetUserId = isTrainerWriting 
+          ? (clientsService.selectedUserId ?? uid)
+          : uid;
 
-      if (existing == null) {
-        await SupabaseConfig.client.from('meals').insert({
-          'id': _uuid.v4(),
-          'user_id': uid,
-          'meal_type': type.dbValue,
-          'date': ds,
-          'eaten_at': DateTime.now().toIso8601String(),
-          'comment': trimmed,
-        });
+      if (mealIds != null && mealIds.isNotEmpty) {
+        debugPrint('💬 Updating comment for ${mealIds.length} meals');
+        for (final mealId in mealIds) {
+          await retryRequest(() => SupabaseConfig.client
+              .from('meals')
+              .update({
+                'comment': trimmed,
+                'is_read': isReadValue,
+              })
+              .eq('id', mealId)
+              .eq('user_id', targetUserId));
+        }
       } else {
-        await SupabaseConfig.client
+        debugPrint('💬 Searching for meals to update comment');
+        final existingMeals = await retryRequest(() => SupabaseConfig.client
             .from('meals')
-            .update({'comment': trimmed})
-            .eq('id', existing['id'] as String);
+            .select('id')
+            .eq('user_id', targetUserId)
+            .eq('date', ds)
+            .eq('meal_type', type.dbValue));
+
+        if (existingMeals.isEmpty) {
+          if (trimmed != null) {
+            debugPrint('💬 Creating new meal with comment for $type');
+            await SupabaseConfig.client.from('meals').insert({
+              'id': _uuid.v4(),
+              'user_id': targetUserId,
+              'meal_type': type.dbValue,
+              'date': ds,
+              'eaten_at': DateTime.now().toIso8601String(),
+              'comment': trimmed,
+              'is_read': isReadValue,
+            });
+          }
+        } else {
+          for (final m in existingMeals) {
+            await SupabaseConfig.client
+                .from('meals')
+                .update({
+                  'comment': trimmed,
+                  'is_read': isReadValue,
+                })
+                .eq('id', m['id'] as String);
+          }
+        }
       }
 
       _clearMealsCaches();
+      await _loadMealsOfType(type, date, force: true);
+      notifyListeners();
+
+      // 🔥 Если тренер пишет — отправить email КЛИЕНТУ
+      if (isTrainerWriting && trimmed != null) {
+        final targetClientId = clientsService.selectedUserId;
+        
+        debugPrint('📧 [EMAIL] Checking conditions:');
+        debugPrint('   - isTrainerWriting: $isTrainerWriting');
+        debugPrint('   - trimmed: "$trimmed"');
+        debugPrint('   - targetClientId: $targetClientId');
+        
+        if (targetClientId != null && targetClientId.isNotEmpty) {
+          debugPrint('📧 [EMAIL] Sending email to CLIENT: $targetClientId');
+          
+          // 🔥 Не блокируем сохранение комментария, если email не отправится
+          _sendCommentNotificationToClient(
+            clientId: targetClientId,
+            mealType: type.label,
+            comment: trimmed,
+          ).catchError((e) {
+            debugPrint('⚠️ [EMAIL] Background email failed: $e');
+          });
+        } else {
+          debugPrint('⚠️ [EMAIL] Cannot send: selectedUserId is null or empty');
+        }
+      }
 
       return true;
-    } catch (e) {
+    } catch (e, stack) {
       debugPrint('❌ updateComment error: $e');
+      debugPrint('❌ Stack: $stack');
+      return false;
+    }
+  }
+
+  // ============================================
+  // 🔥 ОТПРАВКА EMAIL-УВЕДОМЛЕНИЯ КЛИЕНТУ (через Edge Function)
+  // ============================================
+  Future<void> _sendCommentNotificationToClient({
+    required String clientId,
+    required String mealType,
+    required String comment,
+  }) async {
+    try {
+      debugPrint('📧 [EMAIL] === Starting email send ===');
+      debugPrint('📧 [EMAIL] Client ID: $clientId');
+      debugPrint('📧 [EMAIL] Meal type: $mealType');
+      debugPrint('📧 [EMAIL] Comment: $comment');
+      
+      // Получаем имя тренера
+      final currentUserId = SupabaseConfig.currentUserId;
+      String trainerName = 'вашего тренера';
+      
+      if (currentUserId != null) {
+        try {
+          final trainerData = await retryRequest(() => SupabaseConfig.client
+              .from('users')
+              .select('username, email')
+              .eq('id', currentUserId)
+              .maybeSingle());
+          
+          debugPrint('📧 [EMAIL] Trainer data: $trainerData');
+          
+          if (trainerData != null && trainerData['username'] != null) {
+            trainerName = trainerData['username'] as String;
+          }
+        } catch (e) {
+          debugPrint('⚠️ [EMAIL] Could not fetch trainer name: $e');
+        }
+      } else {
+        debugPrint('⚠️ [EMAIL] currentUserId is null');
+      }
+      
+      debugPrint('📧 [EMAIL] Trainer name: $trainerName');
+      
+      // Проверяем, что Edge Function существует
+      debugPrint('📧 [EMAIL] Calling Edge Function: send-comment-email');
+      
+      final response = await SupabaseConfig.client.functions.invoke(
+        'send-comment-email',
+        body: {
+          'client_id': clientId,
+          'meal_type': mealType,
+          'comment': comment,
+          'trainer_name': trainerName,
+        },
+      );
+
+      debugPrint('📧 [EMAIL] Response status: ${response.status}');
+      debugPrint('📧 [EMAIL] Response data: ${response.data}');
+
+      if (response.status == 200) {
+        debugPrint('✅ [EMAIL] Email sent successfully');
+      } else {
+        debugPrint('⚠️ [EMAIL] Email failed with status: ${response.status}');
+        debugPrint('⚠️ [EMAIL] Error details: ${response.data}');
+      }
+    } catch (e, stack) {
+      debugPrint('❌ [EMAIL] Exception: $e');
+      debugPrint('❌ [EMAIL] Stack: $stack');
+    }
+  }
+
+  // ============================================
+  // 🔥 ПОМЕТИТЬ КОММЕНТАРИЙ КАК ПРОЧИТАННЫЙ
+  // ============================================
+  Future<bool> markCommentAsRead(MealType type) async {
+    try {
+      final uid = userId;
+      if (uid == null || uid.isEmpty) return false;
+
+      debugPrint('📖 markCommentAsRead called for $type');
+
+      final meals = _meals[type] ?? [];
+      final unreadMealIds = <String>{};
+      
+      for (final m in meals) {
+        if (!m.isRead && m.comment != null && m.comment!.isNotEmpty) {
+          unreadMealIds.addAll(m.dbMealIds);
+        }
+      }
+
+      if (_sectionCommentsUnread[type] == true) {
+        final ds = _date.toIso8601String().split('T')[0];
+        final sectionMeals = await retryRequest(() => SupabaseConfig.client
+            .from('meals')
+            .select('id')
+            .eq('user_id', uid)
+            .eq('date', ds)
+            .eq('meal_type', type.dbValue)
+            .eq('is_read', false)
+            .not('comment', 'is', null));
+        
+        for (final m in sectionMeals) {
+          unreadMealIds.add(m['id'] as String);
+        }
+      }
+
+      if (unreadMealIds.isEmpty) {
+        debugPrint('ℹ️ No unread meals to mark for $type');
+        return true;
+      }
+
+      debugPrint('📖 Marking ${unreadMealIds.length} meals as read for $type');
+
+      for (final mealId in unreadMealIds) {
+        await retryRequest(() => SupabaseConfig.client
+            .from('meals')
+            .update({'is_read': true})
+            .eq('id', mealId)
+            .eq('user_id', uid));
+      }
+
+      _meals[type] = meals.map((m) => m.copyWith(isRead: true)).toList();
+      _sectionCommentsUnread[type] = false;
+      notifyListeners();
+
+      debugPrint('✅ Comments marked as read for $type');
+      return true;
+    } catch (e) {
+      debugPrint('❌ markCommentAsRead error: $e');
       return false;
     }
   }
@@ -1113,6 +1387,9 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
     }
   }
 
+  // ============================================
+  // 🔥 УДАЛЕНИЕ ПРОДУКТА ИЗ ПРИЁМА ПИЩИ
+  // ============================================
   Future<bool> deleteMealItem({
     required Meal meal,
   }) async {
@@ -1120,7 +1397,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       final uid = userId;
       if (uid == null || uid.isEmpty) throw Exception('Не авторизован');
 
-      debugPrint('️ Deleting meal item: ${meal.name}');
+      debugPrint('🗑️ Deleting meal item: ${meal.name}');
       debugPrint('📋 Meal IDs to delete: ${meal.mealItemIds}');
 
       if (meal.mealItemIds.isEmpty) {
@@ -1224,7 +1501,6 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       debugPrint(
           '💾 Updating goals for $ds: P=$protein F=$fat C=$carbs K=$calories');
 
-      // 🔥 Используем upsert с onConflict по (user_id, date)
       await retryRequest(() => SupabaseConfig.client
           .from('user_goals')
           .upsert({
@@ -1237,7 +1513,6 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
             'is_active': true,
           }, onConflict: 'user_id,date'));
 
-      // Инвалидируем кэш целей
       _cachedGoals = null;
       _goalsCacheTime = null;
 

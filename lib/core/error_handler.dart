@@ -1,6 +1,8 @@
-import 'dart:io';
+import 'dart:io' show SocketException;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:supabase_flutter/supabase_flutter.dart' 
+    show PostgrestException, AuthException;
 
 import '../main.dart'; // 🔥 Импортируем navigatorKey
 
@@ -13,6 +15,7 @@ class ErrorHandler {
     if (error == null) return 'Произошла непредвиденная ошибка';
 
     final errorStr = error.toString();
+    debugPrint('🔍 ErrorHandler.format: $errorStr (context: $context)');
 
     // Сетевые ошибки
     if (error is SocketException ||
@@ -21,7 +24,9 @@ class ErrorHandler {
         errorStr.contains('Connection refused') ||
         errorStr.contains('Connection timed out') ||
         errorStr.contains('Connection reset by peer') ||
-        errorStr.contains('Failed host lookup')) {
+        errorStr.contains('Failed host lookup') ||
+        errorStr.contains('network') ||
+        errorStr.contains('no internet')) {
       return 'Нет подключения к интернету. Проверьте соединение';
     }
 
@@ -30,15 +35,22 @@ class ErrorHandler {
         errorStr.contains('database') ||
         error is PostgrestException) {
       if (errorStr.contains('JWT expired') ||
-          errorStr.contains('token expired')) {
+          errorStr.contains('token expired') ||
+          errorStr.contains('session expired')) {
         return 'Сессия истекла. Пожалуйста, войдите снова';
       }
-      if (errorStr.contains('duplicate') || errorStr.contains('unique')) {
+      if (errorStr.contains('duplicate') || 
+          errorStr.contains('unique') || 
+          errorStr.contains('already exists')) {
         return 'Такая запись уже существует';
       }
       if (errorStr.contains('row-level security') ||
-          errorStr.contains('RLS')) {
+          errorStr.contains('RLS') ||
+          errorStr.contains('permission denied')) {
         return 'Ошибка прав доступа. Обратитесь к поддержке';
+      }
+      if (errorStr.contains('foreign key') || errorStr.contains('constraint')) {
+        return 'Ошибка данных. Попробуйте снова';
       }
       return 'Ошибка сохранения данных. Попробуйте позже';
     }
@@ -49,16 +61,17 @@ class ErrorHandler {
       if (msg.contains('invalid login credentials') ||
           msg.contains('invalid credentials') ||
           msg.contains('user not found') ||
-          msg.contains('wrong password')) {
+          msg.contains('wrong password') ||
+          msg.contains('identity not found')) {
         return 'Неверный email или пароль';
       }
       if (msg.contains('email not confirmed')) {
         return 'Подтвердите ваш email. Проверьте почту';
       }
-      if (msg.contains('rate limit')) {
+      if (msg.contains('rate limit') || msg.contains('too many requests')) {
         return 'Слишком много попыток. Попробуйте позже';
       }
-      if (msg.contains('weak password')) {
+      if (msg.contains('weak password') || msg.contains('password is too weak')) {
         return 'Пароль слишком слабый. Минимум 6 символов';
       }
       if (msg.contains('user already registered') ||
@@ -123,6 +136,10 @@ class ErrorHandler {
           return 'Не удалось войти. Проверьте email и пароль';
         case 'signup':
           return 'Не удалось зарегистрироваться. Попробуйте снова';
+        case 'diary_load':
+          return 'Не удалось загрузить дневник. Попробуйте снова';
+        case 'diary_save':
+          return 'Не удалось сохранить запись. Попробуйте снова';
       }
     }
 
@@ -145,6 +162,8 @@ class ErrorHandler {
 
   /// Показывает ошибку в SnackBar через глобальный контекст
   static void showGlobal(String message) {
+    debugPrint('📢 ErrorHandler.showGlobal: "$message"');
+    
     final ctx = _getGlobalContext();
     if (ctx == null) {
       debugPrint('⚠️ ErrorHandler.showGlobal: No context available');
@@ -158,6 +177,7 @@ class ErrorHandler {
         return;
       }
       
+      messenger.hideCurrentSnackBar();
       messenger.showSnackBar(
         SnackBar(
           content: Row(
@@ -184,6 +204,8 @@ class ErrorHandler {
 
   /// Показывает сообщение об успехе через глобальный контекст
   static void showSuccessGlobal(String message) {
+    debugPrint('✅ ErrorHandler.showSuccessGlobal: "$message"');
+    
     final ctx = _getGlobalContext();
     if (ctx == null) {
       debugPrint('⚠️ ErrorHandler.showSuccessGlobal: No context available');
@@ -197,6 +219,7 @@ class ErrorHandler {
         return;
       }
       
+      messenger.hideCurrentSnackBar();
       messenger.showSnackBar(
         SnackBar(
           content: Row(
@@ -217,14 +240,27 @@ class ErrorHandler {
   }
 
   /// Показывает ошибку в SnackBar (для использования внутри виджетов)
+  /// 🔥 Если локальный контекст не работает — fallback на глобальный
   static void show(BuildContext ctx, String message) {
+    debugPrint('📢 ErrorHandler.show: "$message"');
+    debugPrint('   context.mounted: ${ctx.mounted}');
+    
+    // 🔥 Если контекст уже не активен — используем глобальный
+    if (!ctx.mounted) {
+      debugPrint('⚠️ Context не активен, переключаемся на showGlobal');
+      showGlobal(message);
+      return;
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final messenger = ScaffoldMessenger.maybeOf(ctx);
       if (messenger == null) {
-        debugPrint('⚠️ ErrorHandler.show: ScaffoldMessenger not found');
+        debugPrint('⚠️ ErrorHandler.show: ScaffoldMessenger не найден, переключаемся на showGlobal');
+        showGlobal(message);
         return;
       }
-      
+
+      messenger.hideCurrentSnackBar();
       messenger.showSnackBar(
         SnackBar(
           content: Row(
@@ -232,8 +268,8 @@ class ErrorHandler {
               const Icon(Icons.error_outline, color: Colors.white, size: 20),
               const SizedBox(width: 8),
               Expanded(
-                  child: Text(message,
-                      style: const TextStyle(color: Colors.white))),
+                child: Text(message, style: const TextStyle(color: Colors.white)),
+              ),
             ],
           ),
           backgroundColor: Colors.red.shade700,
@@ -250,14 +286,26 @@ class ErrorHandler {
   }
 
   /// Показывает сообщение об успехе (для использования внутри виджетов)
+  /// 🔥 Если локальный контекст не работает — fallback на глобальный
   static void showSuccess(BuildContext ctx, String message) {
+    debugPrint('✅ ErrorHandler.showSuccess: "$message"');
+    debugPrint('   context.mounted: ${ctx.mounted}');
+    
+    if (!ctx.mounted) {
+      debugPrint('⚠️ Context не активен, переключаемся на showSuccessGlobal');
+      showSuccessGlobal(message);
+      return;
+    }
+
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final messenger = ScaffoldMessenger.maybeOf(ctx);
       if (messenger == null) {
-        debugPrint('⚠️ ErrorHandler.showSuccess: ScaffoldMessenger not found');
+        debugPrint('⚠️ ErrorHandler.showSuccess: ScaffoldMessenger не найден');
+        showSuccessGlobal(message);
         return;
       }
-      
+
+      messenger.hideCurrentSnackBar();
       messenger.showSnackBar(
         SnackBar(
           content: Row(
@@ -265,8 +313,8 @@ class ErrorHandler {
               const Icon(Icons.check_circle, color: Colors.white, size: 20),
               const SizedBox(width: 8),
               Expanded(
-                  child: Text(message,
-                      style: const TextStyle(color: Colors.white))),
+                child: Text(message, style: const TextStyle(color: Colors.white)),
+              ),
             ],
           ),
           backgroundColor: Colors.green.shade700,
