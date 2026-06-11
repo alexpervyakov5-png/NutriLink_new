@@ -1105,6 +1105,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
 
   // ============================================
   // 🔥 ОБНОВЛЕНИЕ КОММЕНТАРИЯ СЕКЦИИ
+  // 🔥 С RETRY для всех запросов к БД
   // ============================================
   Future<bool> updateComment({
     required MealType type,
@@ -1139,8 +1140,12 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
           ? (clientsService.selectedUserId ?? uid)
           : uid;
 
+      debugPrint('💬 Target user ID: $targetUserId');
+
       if (mealIds != null && mealIds.isNotEmpty) {
         debugPrint('💬 Updating comment for ${mealIds.length} meals');
+        
+        // 🔥 ОБЁРНУТО В retryRequest
         for (final mealId in mealIds) {
           await retryRequest(() => SupabaseConfig.client
               .from('meals')
@@ -1151,8 +1156,12 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
               .eq('id', mealId)
               .eq('user_id', targetUserId));
         }
+        
+        debugPrint('✅ Updated ${mealIds.length} meals');
       } else {
-        debugPrint('💬 Searching for meals to update comment');
+        debugPrint('💬 Searching for meals to update comment...');
+        
+        // 🔥 ОБЁРНУТО В retryRequest
         final existingMeals = await retryRequest(() => SupabaseConfig.client
             .from('meals')
             .select('id')
@@ -1160,10 +1169,14 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
             .eq('date', ds)
             .eq('meal_type', type.dbValue));
 
+        debugPrint('💬 Found ${existingMeals.length} existing meals');
+
         if (existingMeals.isEmpty) {
           if (trimmed != null) {
             debugPrint('💬 Creating new meal with comment for $type');
-            await SupabaseConfig.client.from('meals').insert({
+            
+            // 🔥 ОБЁРНУТО В retryRequest
+            await retryRequest(() => SupabaseConfig.client.from('meals').insert({
               'id': _uuid.v4(),
               'user_id': targetUserId,
               'meal_type': type.dbValue,
@@ -1171,18 +1184,26 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
               'eaten_at': DateTime.now().toIso8601String(),
               'comment': trimmed,
               'is_read': isReadValue,
-            });
+            }));
+            
+            debugPrint('✅ New meal created');
           }
         } else {
+          debugPrint('💬 Updating ${existingMeals.length} existing meals');
+          
+          // 🔥 ОБЁРНУТО В retryRequest
           for (final m in existingMeals) {
-            await SupabaseConfig.client
+            await retryRequest(() => SupabaseConfig.client
                 .from('meals')
                 .update({
                   'comment': trimmed,
                   'is_read': isReadValue,
                 })
-                .eq('id', m['id'] as String);
+                .eq('id', m['id'] as String)
+                .eq('user_id', targetUserId));
           }
+          
+          debugPrint('✅ Updated ${existingMeals.length} meals');
         }
       }
 
@@ -1202,14 +1223,12 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         if (targetClientId != null && targetClientId.isNotEmpty) {
           debugPrint('📧 [EMAIL] Sending email to CLIENT: $targetClientId');
           
-          // 🔥 Не блокируем сохранение комментария, если email не отправится
-          _sendCommentNotificationToClient(
+          // 🔥 Запускаем в фоне, не блокируем UI
+          unawaited(_sendCommentNotificationToClient(
             clientId: targetClientId,
             mealType: type.label,
             comment: trimmed,
-          ).catchError((e) {
-            debugPrint('⚠️ [EMAIL] Background email failed: $e');
-          });
+          ));
         } else {
           debugPrint('⚠️ [EMAIL] Cannot send: selectedUserId is null or empty');
         }
@@ -1225,70 +1244,104 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
 
   // ============================================
   // 🔥 ОТПРАВКА EMAIL-УВЕДОМЛЕНИЯ КЛИЕНТУ (через Edge Function)
+  // 🔥 С ПОВТОРНЫМИ ПОПЫТКАМИ при ошибке сети
   // ============================================
   Future<void> _sendCommentNotificationToClient({
     required String clientId,
     required String mealType,
     required String comment,
   }) async {
+    debugPrint('📧 [EMAIL] ========== START ==========');
+    
     try {
-      debugPrint('📧 [EMAIL] === Starting email send ===');
-      debugPrint('📧 [EMAIL] Client ID: $clientId');
-      debugPrint('📧 [EMAIL] Meal type: $mealType');
-      debugPrint('📧 [EMAIL] Comment: $comment');
+      // 🔥 ШАГ 1: Получаем ID текущего пользователя (тренера)
+      debugPrint('📧 [EMAIL] Step 1: Getting current user...');
       
-      // Получаем имя тренера
-      final currentUserId = SupabaseConfig.currentUserId;
-      String trainerName = 'вашего тренера';
+      String? currentUserId;
+      try {
+        currentUserId = SupabaseConfig.client.auth.currentUser?.id;
+        debugPrint('📧 [EMAIL]   - currentUserId: $currentUserId');
+      } catch (e) {
+        debugPrint('⚠️ [EMAIL]   - Error getting current user: $e');
+      }
       
-      if (currentUserId != null) {
+      if (currentUserId == null || currentUserId.isEmpty) {
+        currentUserId = SupabaseConfig.currentUserId;
+        debugPrint('📧 [EMAIL]   - Fallback currentUserId: $currentUserId');
+      }
+      
+      // 🔥 ШАГ 2: Получаем имя тренера
+      debugPrint('📧 [EMAIL] Step 2: Getting trainer name...');
+      String trainerName = 'Ваш тренер';
+      
+      if (currentUserId != null && currentUserId.isNotEmpty) {
         try {
-          final trainerData = await retryRequest(() => SupabaseConfig.client
+          final response = await SupabaseConfig.client
               .from('users')
-              .select('username, email')
+              .select('username')
               .eq('id', currentUserId)
-              .maybeSingle());
+              .maybeSingle();
           
-          debugPrint('📧 [EMAIL] Trainer data: $trainerData');
-          
-          if (trainerData != null && trainerData['username'] != null) {
-            trainerName = trainerData['username'] as String;
+          if (response != null && response['username'] != null) {
+            final username = response['username'];
+            if (username != null && username.toString().isNotEmpty) {
+              trainerName = username.toString();
+            }
+          }
+          debugPrint('📧 [EMAIL]   - Trainer name: $trainerName');
+        } catch (e) {
+          debugPrint('⚠️ [EMAIL]   - Error fetching trainer name: $e');
+        }
+      }
+      
+      // 🔥 ШАГ 3: Вызываем Edge Function С ПОВТОРНЫМИ ПОПЫТКАМИ
+      debugPrint('📧 [EMAIL] Step 3: Calling Edge Function...');
+      
+      const maxAttempts = 3;
+      const delayBetweenAttempts = Duration(seconds: 2);
+      
+      for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+        debugPrint('📧 [EMAIL]   - Attempt $attempt of $maxAttempts');
+        
+        try {
+          final response = await SupabaseConfig.client.functions.invoke(
+            'send-comment-email',
+            body: {
+              'client_id': clientId,
+              'meal_type': mealType,
+              'comment': comment,
+              'trainer_name': trainerName,
+            },
+          );
+
+          debugPrint('📧 [EMAIL]   - Status: ${response.status}');
+          debugPrint('📧 [EMAIL]   - Data: ${response.data}');
+
+          if (response.status == 200) {
+            debugPrint('✅ [EMAIL] Email sent successfully!');
+            debugPrint('📧 [EMAIL] ========== END ==========');
+            return; // ✅ Успех — выходим
+          } else {
+            debugPrint('⚠️ [EMAIL] Failed with status: ${response.status}');
           }
         } catch (e) {
-          debugPrint('⚠️ [EMAIL] Could not fetch trainer name: $e');
+          debugPrint('⚠️ [EMAIL] Attempt $attempt failed: $e');
+          
+          if (attempt < maxAttempts) {
+            debugPrint('📧 [EMAIL]   - Waiting ${delayBetweenAttempts.inSeconds}s before retry...');
+            await Future.delayed(delayBetweenAttempts);
+          }
         }
-      } else {
-        debugPrint('⚠️ [EMAIL] currentUserId is null');
       }
       
-      debugPrint('📧 [EMAIL] Trainer name: $trainerName');
+      debugPrint('❌ [EMAIL] All $maxAttempts failed. Giving up.');
       
-      // Проверяем, что Edge Function существует
-      debugPrint('📧 [EMAIL] Calling Edge Function: send-comment-email');
-      
-      final response = await SupabaseConfig.client.functions.invoke(
-        'send-comment-email',
-        body: {
-          'client_id': clientId,
-          'meal_type': mealType,
-          'comment': comment,
-          'trainer_name': trainerName,
-        },
-      );
-
-      debugPrint('📧 [EMAIL] Response status: ${response.status}');
-      debugPrint('📧 [EMAIL] Response data: ${response.data}');
-
-      if (response.status == 200) {
-        debugPrint('✅ [EMAIL] Email sent successfully');
-      } else {
-        debugPrint('⚠️ [EMAIL] Email failed with status: ${response.status}');
-        debugPrint('⚠️ [EMAIL] Error details: ${response.data}');
-      }
     } catch (e, stack) {
-      debugPrint('❌ [EMAIL] Exception: $e');
+      debugPrint('❌ [EMAIL] UNEXPECTED ERROR: $e');
       debugPrint('❌ [EMAIL] Stack: $stack');
     }
+    
+    debugPrint('📧 [EMAIL] ========== END ==========');
   }
 
   // ============================================
