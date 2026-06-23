@@ -1,34 +1,17 @@
-
-
+import 'package:Nutrilink/core/constants.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../core/config.dart';
-import '../core/error_handler.dart'; // 🔥 ИСПРАВЛЕНО: добавлен импорт
+import '../core/error_handler.dart';
+import '../core/constants.dart';
+
 import '../data/models.dart';
 
 import '../data/clients_service.dart';
 import 'widgets.dart';
 
 import '../data/measurements_service.dart';
-
-// ============================================
-// ВСПОМОГАТЕЛЬНЫЕ КОНСТАНТЫ (локальные)
-// ============================================
-class _MeasurementsConstants {
-  // Диапазоны валидации
-  static const double weightMin = 30;
-  static const double weightMax = 300;
-  static const double chestMin = 50;
-  static const double chestMax = 200;
-  static const double waistMin = 40;
-  static const double waistMax = 200;
-  static const double hipsMin = 50;
-  static const double hipsMax = 200;
-  
-  // Даты
-  static const int datePickerFirstYear = 2020;
-}
 
 // ============================================
 // MeasurementsScreen
@@ -64,12 +47,9 @@ class _MeasurementsScreenState extends State<MeasurementsScreen> {
       }
     } catch (e) {
       if (!mounted) return;
-      // 🔥 ИСПРАВЛЕНО: используем централизованный ErrorHandler
       ErrorHandler.show(context, ErrorHandler.format(e, context: 'measurements_load'));
     }
   }
-
-  // 🔥 УДАЛЕНО: _formatError и _showError — используем ErrorHandler
 
   @override
   Widget build(BuildContext context) {
@@ -214,14 +194,11 @@ class _Card extends StatelessWidget {
         onDismissed: (_) async {
           try {
             await context.read<MeasurementsService>().delete(m.id);
-            // 🔥 ИСПРАВЛЕНО: используем свойство mounted состояния, а не параметра
             if (context.mounted) {
-              // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
               ErrorHandler.showSuccess(context, 'Удалено');
             }
           } catch (e) {
             if (context.mounted) {
-              // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
               ErrorHandler.show(
                 context, 
                 ErrorHandler.format(e, context: 'measurements_delete'),
@@ -314,7 +291,6 @@ void _showForm({
   Measurement? edit,
 }) {
   final formKey = GlobalKey<FormState>();
-  // 🔥 ИСПРАВЛЕНО: используем локальную переменную вместо ValueNotifier для простоты
   DateTime selectedDate = edit?.measuredAt ?? DateTime.now();
   
   final wCtrl = TextEditingController(text: edit?.weightKg?.toStringAsFixed(1) ?? '');
@@ -364,14 +340,13 @@ void _showForm({
                   fontWeight: FontWeight.w500),
             ),
             const SizedBox(height: 24),
-            // 🔥 ИСПРАВЛЕНО: обновление даты через setModalState вместо ValueNotifier
             InkWell(
               onTap: () async {
                 try {
                   final nd = await showDatePicker(
                     context: sheetCtx,
                     initialDate: selectedDate,
-                    firstDate: DateTime(_MeasurementsConstants.datePickerFirstYear),
+                    firstDate: DateTime(2020),
                     lastDate: DateTime.now(),
                   );
                   if (nd != null && sheetCtx.mounted) {
@@ -379,7 +354,6 @@ void _showForm({
                   }
                 } catch (e) {
                   if (sheetCtx.mounted) {
-                    // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
                     ErrorHandler.show(sheetCtx, 'Не удалось выбрать дату');
                   }
                 }
@@ -451,27 +425,47 @@ void _showForm({
                   final hips = double.tryParse(hiCtrl.text);
                   
                   if (weight == null && chest == null && waist == null && hips == null) {
-                    // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
                     ErrorHandler.show(sheetCtx, 'Заполните хотя бы одно поле');
                     return;
                   }
                   
-                  // 🔥 ИСПРАВЛЕНО: используем локальные константы
-                  if (weight != null && (weight < _MeasurementsConstants.weightMin || weight > _MeasurementsConstants.weightMax)) {
-                    ErrorHandler.show(sheetCtx, 'Вес должен быть от ${_MeasurementsConstants.weightMin} до ${_MeasurementsConstants.weightMax} кг');
-                    return;
+                  // 🔥 ВАЛИДАЦИЯ С ПОДТВЕРЖДЕНИЕМ
+                  bool allValid = true;
+                  
+                  if (weight != null) {
+                    final weightValid = await InputValidator.validateWeight(
+                      context: sheetCtx,
+                      weight: weight,
+                    );
+                    if (!weightValid) allValid = false;
                   }
-                  if (chest != null && (chest < _MeasurementsConstants.chestMin || chest > _MeasurementsConstants.chestMax)) {
-                    ErrorHandler.show(sheetCtx, 'Грудь должна быть от ${_MeasurementsConstants.chestMin} до ${_MeasurementsConstants.chestMax} см');
-                    return;
+                  
+                  if (allValid && chest != null) {
+                    final chestValid = await InputValidator.validateChest(
+                      context: sheetCtx,
+                      chest: chest,
+                    );
+                    if (!chestValid) allValid = false;
                   }
-                  if (waist != null && (waist < _MeasurementsConstants.waistMin || waist > _MeasurementsConstants.waistMax)) {
-                    ErrorHandler.show(sheetCtx, 'Талия должна быть от ${_MeasurementsConstants.waistMin} до ${_MeasurementsConstants.waistMax} см');
-                    return;
+                  
+                  if (allValid && waist != null) {
+                    final waistValid = await InputValidator.validateWaist(
+                      context: sheetCtx,
+                      waist: waist,
+                    );
+                    if (!waistValid) allValid = false;
                   }
-                  if (hips != null && (hips < _MeasurementsConstants.hipsMin || hips > _MeasurementsConstants.hipsMax)) {
-                    ErrorHandler.show(sheetCtx, 'Бёдра должны быть от ${_MeasurementsConstants.hipsMin} до ${_MeasurementsConstants.hipsMax} см');
-                    return;
+                  
+                  if (allValid && hips != null) {
+                    final hipsValid = await InputValidator.validateHips(
+                      context: sheetCtx,
+                      hips: hips,
+                    );
+                    if (!hipsValid) allValid = false;
+                  }
+                  
+                  if (!allValid) {
+                    return; // Пользователь отменил
                   }
                   
                   try {
@@ -486,11 +480,9 @@ void _showForm({
                       );
                       if (!sheetCtx.mounted) return;
                       if (success) {
-                        // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
                         ErrorHandler.showSuccess(sheetCtx, 'Замер обновлён');
                         Navigator.pop(sheetCtx);
                       } else {
-                        // 🔥 svc.error уже отформатирован в сервисе
                         ErrorHandler.show(sheetCtx, svc.error ?? 'Не удалось обновить замер');
                       }
                     } else {
@@ -511,7 +503,6 @@ void _showForm({
                     }
                   } catch (e) {
                     if (!sheetCtx.mounted) return;
-                    // 🔥 ИСПРАВЛЕНО: используем централизованный ErrorHandler
                     ErrorHandler.show(
                       sheetCtx, 
                       ErrorHandler.format(e, context: edit != null ? 'measurements_update' : 'measurements_save'),
@@ -542,17 +533,9 @@ void _showForm({
         ),
       ),
     )),
-  ).whenComplete(() {
-    // 🔥 ИСПРАВЛЕНО: освобождаем ресурсы контроллеров
-    wCtrl.dispose();
-    chCtrl.dispose();
-    waCtrl.dispose();
-    hiCtrl.dispose();
-    // 🔥 ValueNotifier больше не используется, поэтому dispose() не нужен
-  });
+  );
 }
 
-// Вспомогательная функция для названия месяца (вынесена из _Card для повторного использования)
 String _monthName(int m) => [
       'янв', 'фев', 'мар', 'апр', 'мая', 'июн',
       'июл', 'авг', 'сен', 'окт', 'ноя', 'дек'

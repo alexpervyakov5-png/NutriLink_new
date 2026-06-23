@@ -81,6 +81,9 @@ class _StatsScreenState extends State<StatsScreen> {
       final svc = context.read<StatsService>();
       if (svc.stats == null && !svc.loading) {
         await svc.load();
+      } else if (svc.stats != null) {
+        // 🔥 ИСПРАВЛЕНО: обновлять данные при каждом открытии экрана
+        await svc.refresh();
       }
     } catch (e) {
       if (!mounted) return;

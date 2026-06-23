@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../../core/config.dart';
 import '../../core/error_handler.dart';
+import '../../core/constants.dart';
 import '../../data/diary_service.dart';
 
 /// Открывает нижнюю панель для редактирования дневных целей
@@ -75,6 +76,53 @@ void showGoalsEditSheet({
                     return;
                   }
 
+                  // 🔥 ВАЛИДАЦИЯ С ПОДТВЕРЖДЕНИЕМ
+                  bool allValid = true;
+                  
+                  if (cal > 0) {
+                    final calValid = await InputValidator.validateCalories(
+                      context: context,
+                      calories: cal,
+                    );
+                    if (!calValid) {
+                      allValid = false;
+                    }
+                  }
+                  
+                  if (allValid && pro > 0) {
+                    final proValid = await InputValidator.validateProtein(
+                      context: context,
+                      protein: pro,
+                    );
+                    if (!proValid) {
+                      allValid = false;
+                    }
+                  }
+                  
+                  if (allValid && fat > 0) {
+                    final fatValid = await InputValidator.validateFat(
+                      context: context,
+                      fat: fat,
+                    );
+                    if (!fatValid) {
+                      allValid = false;
+                    }
+                  }
+                  
+                  if (allValid && carb > 0) {
+                    final carbValid = await InputValidator.validateCarbs(
+                      context: context,
+                      carbs: carb,
+                    );
+                    if (!carbValid) {
+                      allValid = false;
+                    }
+                  }
+                  
+                  if (!allValid) {
+                    return; // Пользователь отменил
+                  }
+
                   final svc = ctx.read<DiaryService>();
                   final success = await svc.updateGoals(
                     protein: pro,
@@ -84,7 +132,10 @@ void showGoalsEditSheet({
                     date: date,
                   );
 
-                  if (context.mounted) Navigator.pop(context);
+                  // 🔥 Просто закрываем модалку - контроллеры уничтожатся автоматически
+                  if (context.mounted) {
+                    Navigator.pop(context);
+                  }
 
                   if (success) {
                     await svc.refresh();
@@ -111,14 +162,8 @@ void showGoalsEditSheet({
         );
       },
     ),
-  ).whenComplete(() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      proCtrl.dispose();
-      fatCtrl.dispose();
-      carbCtrl.dispose();
-      calCtrl.dispose();
-    });
-  });
+  );
+  // 🔥 Контроллеры будут уничтожены автоматически Flutter при закрытии модалки
 }
 
 Widget _buildInputField(

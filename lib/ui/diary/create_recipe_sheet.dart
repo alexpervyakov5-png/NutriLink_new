@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 
 import '../../core/config.dart';
 import '../../core/error_handler.dart';
@@ -6,6 +7,110 @@ import '../../core/safe_text_controller.dart';
 import '../../data/diary_service.dart';
 import '../../data/models.dart';
 import 'create_product_dialog.dart';
+
+// 🔥 НОВОЕ: Диалог выбора продукта с поиском
+Future<Product?> _showProductPickerDialog({
+  required BuildContext context,
+  required List<Product> products,
+}) {
+  return showDialog<Product>(
+    context: context,
+    builder: (dialogContext) {
+      String searchQuery = '';
+      List<Product> filteredProducts = products;
+
+      return StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            backgroundColor: AppColors.background,
+            title: Text(
+              'Выберите продукт',
+              style: TextStyle(color: AppColors.textPrimary),
+            ),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.backgroundSecondary,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: TextField(
+                      onChanged: (value) {
+                        searchQuery = value.toLowerCase();
+                        setDialogState(() {
+                          filteredProducts = products.where((p) {
+                            return p.name.toLowerCase().contains(searchQuery);
+                          }).toList();
+                        });
+                      },
+                      style: TextStyle(color: AppColors.textPrimary),
+                      decoration: InputDecoration(
+                        hintText: 'Поиск продукта...',
+                        hintStyle: TextStyle(color: AppColors.textHint),
+                        border: InputBorder.none,
+                        icon: Icon(Icons.search, color: AppColors.accent),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Flexible(
+                    child: SizedBox(
+                      width: double.maxFinite,
+                      child: filteredProducts.isEmpty
+                          ? Padding(
+                              padding: const EdgeInsets.all(20),
+                              child: Text(
+                                'Ничего не найдено',
+                                style: TextStyle(color: AppColors.textHint),
+                                textAlign: TextAlign.center,
+                              ),
+                            )
+                          : ListView.builder(
+                              shrinkWrap: true,
+                              itemCount: filteredProducts.length,
+                              itemBuilder: (_, i) {
+                                final product = filteredProducts[i];
+                                return ListTile(
+                                  title: Text(
+                                    product.name,
+                                    style: TextStyle(
+                                        color: AppColors.textPrimary),
+                                  ),
+                                  subtitle: Text(
+                                    '${product.calories.toInt()} ккал/100г',
+                                    style: TextStyle(
+                                        color: AppColors.textSecondary,
+                                        fontSize: 12),
+                                  ),
+                                  onTap: () {
+                                    Navigator.pop(dialogContext, product);
+                                  },
+                                );
+                              },
+                            ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(dialogContext);
+                },
+                child: const Text('Отмена'),
+              ),
+            ],
+          );
+        },
+      );
+    },
+  );
+}
 
 void showCreateRecipeSheet({
   required BuildContext ctx,
@@ -163,25 +268,12 @@ void showCreateRecipeSheet({
                             return;
                           }
 
-                          final chosen = await showDialog<Product>(
+                          // 🔥 ИСПРАВЛЕНО: используем диалог с поиском
+                          final chosen = await _showProductPickerDialog(
                             context: context,
-                            builder: (_) => SimpleDialog(
-                              backgroundColor: AppColors.background,
-                              title: Text('Выберите продукт',
-                                  style: TextStyle(
-                                      color: AppColors.textPrimary)),
-                              children: products
-                                  .map((p) => SimpleDialogOption(
-                                        onPressed: () =>
-                                            Navigator.pop(context, p),
-                                        child: Text(p.name,
-                                            style: TextStyle(
-                                                color: AppColors
-                                                    .textPrimary)),
-                                      ))
-                                  .toList(),
-                            ),
+                            products: products,
                           );
+                          
                           if (chosen != null && context.mounted) {
                             final grams = await showDialog<double>(
                               context: context,
@@ -566,24 +658,12 @@ void showEditRecipeDialog({
                             return;
                           }
 
-                          final chosen = await showDialog<Product>(
+                          // 🔥 ИСПРАВЛЕНО: используем диалог с поиском
+                          final chosen = await _showProductPickerDialog(
                             context: context,
-                            builder: (_) => SimpleDialog(
-                              backgroundColor: AppColors.background,
-                              title: Text('Выберите продукт',
-                                  style: TextStyle(
-                                      color: AppColors.textPrimary)),
-                              children: products
-                                  .map((p) => SimpleDialogOption(
-                                        onPressed: () =>
-                                            Navigator.pop(context, p),
-                                        child: Text(p.name,
-                                            style: TextStyle(
-                                                color: AppColors.textPrimary)),
-                                      ))
-                                  .toList(),
-                            ),
+                            products: products,
                           );
+                          
                           if (chosen != null && context.mounted) {
                             final grams = await showDialog<double>(
                               context: context,

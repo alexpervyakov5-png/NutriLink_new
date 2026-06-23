@@ -223,10 +223,18 @@ class _FoodSearchContentState extends State<_FoodSearchContent> {
     }
   }
 
+  bool _isOwnedByUser(dynamic item, String? userId) {
+    if (userId == null) return false;
+    if (item is Product) return item.userId == userId;
+    if (item is Recipe) return item.userId == userId;
+    return false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final clientsSvc = context.watch<ClientsService>();
     final canEdit = clientsSvc.isViewingOwnData;
+    final currentUserId = clientsSvc.selectedUserId;
 
     return StatefulBuilder(
       builder: (context, setModalState) {
@@ -409,13 +417,17 @@ class _FoodSearchContentState extends State<_FoodSearchContent> {
                                       ? '${item.totalCalories.toInt()} ккал • ${item.baseWeightGrams.toInt()}г'
                                       : '${item.calories.toInt()} ккал/100г • Б:${item.protein.toInt()} Ж:${item.fat.toInt()} У:${item.carbs.toInt()}';
 
-                                  Widget tile = Container(
-                                    margin: const EdgeInsets.symmetric(vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: AppColors.backgroundSecondary,
-                                      borderRadius: BorderRadius.circular(8),
-                                    ),
+                                  final isOwned = _isOwnedByUser(item, currentUserId);
+                                  final canEditItem = canEdit && isOwned;
+
+                                  Widget tile = Padding(
+                                    // 🔥 ИСПРАВЛЕНО: используем Padding вместо margin
+                                    padding: const EdgeInsets.symmetric(vertical: 2),
                                     child: ListTile(
+                                      tileColor: AppColors.backgroundSecondary,
+                                      shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(8),
+                                      ),
                                       contentPadding: const EdgeInsets.symmetric(
                                           horizontal: 12, vertical: 4),
                                       leading: Container(
@@ -439,12 +451,12 @@ class _FoodSearchContentState extends State<_FoodSearchContent> {
                                           style: TextStyle(
                                               color: AppColors.textSecondary,
                                               fontSize: 12)),
-                                      trailing: canEdit
+                                      trailing: canEditItem
                                           ? Icon(Icons.edit_outlined,
                                               color: AppColors.textHint, size: 20)
                                           : null,
                                       onTap: () => _openPortionSelector(item),
-                                      onLongPress: canEdit
+                                      onLongPress: canEditItem
                                           ? () {
                                               if (isProduct) {
                                                 _showEditProductDialog(item);
@@ -456,7 +468,7 @@ class _FoodSearchContentState extends State<_FoodSearchContent> {
                                     ),
                                   );
 
-                                  if (canEdit && (isProduct || isRecipe)) {
+                                  if (canEditItem && (isProduct || isRecipe)) {
                                     tile = Dismissible(
                                       key: Key('${isProduct ? "product" : "recipe"}_${item.id}'),
                                       direction: DismissDirection.endToStart,

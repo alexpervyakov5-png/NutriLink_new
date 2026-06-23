@@ -49,8 +49,16 @@ class StatsService extends ChangeNotifier with ClientAwareService {
 
     if (!shouldReload(force: force)) return;
 
-    if (start != null) _start = start;
-    if (end != null) _end = end;
+    if (start != null) {
+      _start = start;
+    }
+    
+    // 🔥 ИСПРАВЛЕНО: обновляем _end до текущего времени, если не передан параметр
+    if (end != null) {
+      _end = end;
+    } else {
+      _end = DateTime.now();
+    }
 
     _loading = true;
     _error = null;

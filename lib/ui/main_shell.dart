@@ -1,4 +1,3 @@
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../data/profile_service.dart';
@@ -14,11 +13,11 @@ import 'stats_screen.dart';
 import 'profile_screen.dart';
 import 'widgets/custom_tab_icon.dart';
 
-import '../core/error_handler.dart'; // 🔥 ИСПРАВЛЕНО: добавлен импорт
+import '../core/error_handler.dart'; 
 
 import 'widgets/client_selector.dart';
 
-import '../main.dart'; // Для доступа к signOutGlobally и navigatorKey
+import '../main.dart'; 
 
 // ============================================
 // MainShell
@@ -36,7 +35,6 @@ class _MainShellState extends State<MainShell> {
   bool _clientsInitialized = false;
   String? _lastSelectedUserId;
   
-  // 🔥 ИСПРАВЛЕНО: храним ссылку на ClientsService для безопасного удаления слушателя
   ClientsService? _clientsServiceRef;
 
   @override
@@ -52,7 +50,6 @@ class _MainShellState extends State<MainShell> {
   Future<void> _initializeClients() async {
     if (!mounted) return;
     
-    // 🔥 ИСПРАВЛЕНО: сохраняем ссылку на сервис
     final clientsService = context.read<ClientsService>();
     _clientsServiceRef = clientsService;
     
@@ -68,7 +65,6 @@ class _MainShellState extends State<MainShell> {
 
   @override
   void dispose() {
-    // 🔥 ИСПРАВЛЕНО: удаляем слушатель через сохранённую ссылку, а не через context
     if (_clientsInitialized && _clientsServiceRef != null) {
       try {
         _clientsServiceRef!.removeListener(_onClientChanged);
@@ -83,7 +79,6 @@ class _MainShellState extends State<MainShell> {
   void _onClientChanged() {
     if (!mounted) return;
     
-    // 🔥 ИСПРАВЛЕНО: используем сохранённую ссылку
     final clientsService = _clientsServiceRef;
     if (clientsService == null || clientsService.loading) return;
 
@@ -101,7 +96,6 @@ class _MainShellState extends State<MainShell> {
   void _reloadAllServices({bool force = false}) {
     if (!mounted) return;
     
-    // 🔥 ИСПРАВЛЕНО: проверка авторизации перед загрузкой
     if (!SupabaseConfig.isAuthorized) {
       debugPrint('⚠️ _reloadAllServices: user not authorized, skipping');
       return;
@@ -118,7 +112,6 @@ class _MainShellState extends State<MainShell> {
   void _reloadCurrentScreenData({bool force = false}) {
     if (!mounted) return;
     
-    // 🔥 ИСПРАВЛЕНО: проверка авторизации
     if (!SupabaseConfig.isAuthorized) {
       debugPrint('⚠️ _reloadCurrentScreenData: user not authorized, skipping');
       return;
@@ -141,8 +134,6 @@ class _MainShellState extends State<MainShell> {
         break;
     }
   }
-
-  // 🔥 УДАЛЕНО: _formatError и _showError — используем ErrorHandler
 
   @override
   Widget build(BuildContext context) {
@@ -223,7 +214,6 @@ class _MainShellState extends State<MainShell> {
           }
         },
         items: [
-          // 🔥 ИСПРАВЛЕНО: убран activeIcon — CustomTabIcon сам управляет состоянием
           BottomNavigationBarItem(
             icon: CustomTabIcon(
               iconPath: '${AppStrings.assetIcons}home.png',
@@ -296,6 +286,8 @@ class _MainShellState extends State<MainShell> {
           ),
           const SizedBox(height: 24),
           ListTile(
+            // 🔥 ИСПРАВЛЕНИЕ: явно указываем цвет тайла для корректной отрисовки ink splash
+            tileColor: AppColors.backgroundSecondary,
             leading: CustomIcon(
               path: '${AppStrings.assetIcons}person.png',
               width: 24,
@@ -317,6 +309,8 @@ class _MainShellState extends State<MainShell> {
             },
           ),
           ListTile(
+            // 🔥 ИСПРАВЛЕНИЕ: явно указываем цвет тайла для корректной отрисовки ink splash
+            tileColor: AppColors.backgroundSecondary,
             leading: _isSigningOut 
                 ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))
                 : CustomIcon(
@@ -335,13 +329,11 @@ class _MainShellState extends State<MainShell> {
               
               if (!mounted) return;
               
-              // 🔥 Используем глобальную функцию signOutGlobally()
               setState(() => _isSigningOut = true);
               try {
                 await signOutGlobally();
               } catch (e) {
                 if (mounted) {
-                  // 🔥 ИСПРАВЛЕНО: используем ErrorHandler
                   ErrorHandler.show(context, ErrorHandler.format(e, context: 'logout'));
                 }
               } finally {

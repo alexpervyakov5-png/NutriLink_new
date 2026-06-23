@@ -1,3 +1,4 @@
+import 'package:Nutrilink/core/constants.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -12,8 +13,6 @@ import '../data/profile_service.dart';
 
 class _HomeConstants {
   static const int minNameLength = 2;
-  static const int minHeight = 100;
-  static const int maxHeight = 250;
   static const int heightStep = 5;
   static const int heightStart = 150;
 }
@@ -57,11 +56,33 @@ class _HomeScreenState extends State<HomeScreen> {
     if (p.lastName.trim().length < _HomeConstants.minNameLength) {
       return 'Фамилия должна быть не менее ${_HomeConstants.minNameLength} символов';
     }
-    if (p.heightCm != null && 
-        (p.heightCm! < _HomeConstants.minHeight || p.heightCm! > _HomeConstants.maxHeight)) {
-      return 'Рост должен быть от ${_HomeConstants.minHeight} до ${_HomeConstants.maxHeight} см';
-    }
     return null;
+  }
+
+  Future<bool> _validateWithConfirmation(Profile p) async {
+    // Проверка возраста
+    if (p.birthDate != null) {
+      final now = DateTime.now();
+      final age = now.year - p.birthDate!.year;
+      if (age > 0 && age < 150) {
+        final ageValid = await InputValidator.validateAge(
+          context: context,
+          age: age,
+        );
+        if (!ageValid) return false;
+      }
+    }
+
+    // Проверка роста
+    if (p.heightCm != null) {
+      final heightValid = await InputValidator.validateHeight(
+        context: context,
+        height: p.heightCm!,
+      );
+      if (!heightValid) return false;
+    }
+
+    return true;
   }
 
   @override
@@ -167,6 +188,12 @@ class _HomeScreenState extends State<HomeScreen> {
                     if (error != null) {
                       ErrorHandler.show(context, error);
                       return;
+                    }
+                    
+                    // 🔥 ВАЛИДАЦИЯ С ПОДТВЕРЖДЕНИЕМ
+                    final confirmed = await _validateWithConfirmation(svc.profile!);
+                    if (!confirmed && mounted) {
+                      return; // Пользователь отменил
                     }
                     
                     try {
@@ -398,12 +425,8 @@ class _Radio<T> extends StatelessWidget {
   const _Radio(this.label, this.iconKey, this.value, this.groupValue, this.onChanged, {this.enabled = true});
   
   @override 
-  Widget build(BuildContext context) => Container(
-    margin: const EdgeInsets.only(bottom: 8),
-    decoration: BoxDecoration(
-      color: enabled ? AppColors.card : AppColors.card.withOpacity(0.5), 
-      borderRadius: BorderRadius.circular(8)
-    ),
+  Widget build(BuildContext context) => Padding(
+    padding: const EdgeInsets.only(bottom: 8),
     child: RadioListTile<T>(
       title: Row(children: [
         CustomIcon(
@@ -425,6 +448,8 @@ class _Radio<T> extends StatelessWidget {
       } : null, 
       activeColor: AppColors.accentLight,
       contentPadding: const EdgeInsets.symmetric(horizontal: 16),
+      tileColor: enabled ? AppColors.card : AppColors.card.withOpacity(0.5),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
     ),
   );
 

@@ -435,7 +435,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
         meals.add(Meal(
           id: _uuid.v4(),
           name: nm ?? 'Блюдо',
-          weight: '${toIntSafe(it['amount_grams'])}г',
+          weight: '${toIntSafe(it['amount_grams'])}',
           calories: toIntSafe(it['calories']),
           protein: toIntSafe(it['protein']),
           fats: toIntSafe(it['fat']),
@@ -959,7 +959,7 @@ class DiaryService extends ChangeNotifier with ClientAwareService {
       final newMeal = Meal(
         id: _uuid.v4(),
         name: productName,
-        weight: '${portionGrams.toInt()}г',
+        weight: '${portionGrams.toInt()}',
         calories: calories,
         protein: protein,
         fats: fat,

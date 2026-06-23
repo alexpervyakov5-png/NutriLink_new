@@ -301,10 +301,10 @@ class AuthService extends ChangeNotifier {
           await retryRequest(() =>
               _supabase.from('user_goals').insert({
                 'user_id': userId,
-                'calories_target': 2500,
-                'protein_target': 150,
-                'fat_target': 80,
-                'carbs_target': 280,
+                'calories_target': 0,
+                'protein_target': 0,
+                'fat_target': 0,
+                'carbs_target': 0,
                 'is_active': true,
               }));
           debugPrint('✅ [4/5] Goals created');
